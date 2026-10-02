@@ -98,3 +98,14 @@ class Tests(unittest.TestCase):
         self.client.rows['Config']=[]
         with self.assertRaises(SyncError):
             self.remote.read(self.day)
+
+class VerificationTests(unittest.TestCase):
+    def test_unchecked_checkbox_omitted_by_airtable(self):
+        from nutrition.airtable import same_value
+        self.assertTrue(same_value('Approx',None,False))
+        self.assertFalse(same_value('Approx',None,True))
+
+    def test_timestamp_timezone_normalization(self):
+        from nutrition.airtable import same_value
+        self.assertTrue(same_value('LastUpdate','2026-10-02T18:00:00.123Z',
+                                  '2026-10-02T18:00:00.123+00:00'))

@@ -1,0 +1,271 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Nutrition journal",
+    "version": "0.2.0"
+  },
+  "servers": [
+    {
+      "url": "https://YOUR_API_DOMAIN"
+    }
+  ],
+  "security": [
+    {
+      "BearerAuth": []
+    }
+  ],
+  "paths": {
+    "/calculate": {
+      "post": {
+        "operationId": "calculateNutrition",
+        "summary": "calculateNutrition",
+        "x-openai-isConsequential": false,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "portions": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/Portion"
+                    },
+                    "minItems": 1,
+                    "maxItems": 100
+                  }
+                },
+                "required": [
+                  "portions"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Verified result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/day": {
+      "get": {
+        "operationId": "readNutritionDay",
+        "summary": "Read protocols and day before any food advice",
+        "parameters": [
+          {
+            "name": "date",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verified result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/meal": {
+      "post": {
+        "operationId": "saveMealItem",
+        "summary": "saveMealItem",
+        "x-openai-isConsequential": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "date": {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  "item": {
+                    "$ref": "#/components/schemas/MealItem"
+                  },
+                  "expected_version": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "user_confirmed": {
+                    "type": "boolean"
+                  },
+                  "correction": {
+                    "type": "boolean"
+                  },
+                  "user_requested_correction": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "date",
+                  "item",
+                  "expected_version"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Verified result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Nutrients": {
+        "type": "object",
+        "properties": {
+          "kcal": {
+            "type": "string",
+            "description": "Nonnegative decimal number, e.g. 18.5"
+          },
+          "protein": {
+            "type": "string",
+            "description": "Nonnegative decimal number, e.g. 18.5"
+          },
+          "fat": {
+            "type": "string",
+            "description": "Nonnegative decimal number, e.g. 18.5"
+          },
+          "carbs": {
+            "type": "string",
+            "description": "Nonnegative decimal number, e.g. 18.5"
+          }
+        },
+        "required": [
+          "kcal",
+          "protein",
+          "fat",
+          "carbs"
+        ],
+        "additionalProperties": false
+      },
+      "Portion": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "grams": {
+            "type": "string",
+            "description": "Nonnegative decimal number, e.g. 18.5"
+          },
+          "per100": {
+            "$ref": "#/components/schemas/Nutrients"
+          },
+          "source": {
+            "type": "string"
+          },
+          "basis": {
+            "type": "string",
+            "enum": [
+              "raw",
+              "ready"
+            ]
+          },
+          "estimated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "grams",
+          "per100",
+          "source",
+          "basis",
+          "estimated"
+        ],
+        "additionalProperties": false
+      },
+      "MealItem": {
+        "type": "object",
+        "properties": {
+          "MealItemKey": {
+            "type": "string"
+          },
+          "Meal": {
+            "type": "string",
+            "enum": [
+              "BREAKFAST",
+              "LUNCH",
+              "SNACK",
+              "DINNER",
+              "EVENING",
+              "OTHER"
+            ]
+          },
+          "Status": {
+            "type": "string",
+            "enum": [
+              "PLANNED",
+              "CONFIRMED"
+            ]
+          },
+          "Source": {
+            "type": "string",
+            "enum": [
+              "LABEL",
+              "RECIPE",
+              "ESTIMATE"
+            ]
+          },
+          "portion": {
+            "$ref": "#/components/schemas/Portion"
+          }
+        },
+        "required": [
+          "MealItemKey",
+          "Meal",
+          "Status",
+          "Source",
+          "portion"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  }
+}

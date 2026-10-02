@@ -1,0 +1,58 @@
+import json
+import os
+from pathlib import Path
+import sqlite3
+import tempfile
+from threading import Thread
+from http.server import ThreadingHTTPServer
+from unittest.mock import patch
+import unittest
+from urllib.request import Request,urlopen
+from urllib.error import HTTPError
+from nutrition.channels import handler
+
+
+class Tests(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory()
+        self.db=str(Path(self.tmp.name)/'events.sqlite3')
+        with sqlite3.connect(self.db) as db:
+            db.execute('CREATE TABLE delivered(event TEXT PRIMARY KEY)')
+        self.sent=[]
+        self.env=patch.dict(os.environ,dict(TELEGRAM_WEBHOOK_SECRET='secret',TELEGRAM_OWNER_ID='42',
+                      VK_CALLBACK_SECRET='vksecret',VK_GROUP_ID='10',VK_OWNER_ID='42',VK_CONFIRMATION_CODE='confirm'))
+        self.env.start()
+        self.server=ThreadingHTTPServer(('127.0.0.1',0),handler(self.db,lambda text:'answer',lambda *args:self.sent.append(args)))
+        self.thread=Thread(target=self.server.serve_forever,daemon=True);self.thread.start()
+
+    def tearDown(self):
+        self.server.shutdown();self.server.server_close();self.thread.join()
+        self.env.stop();self.tmp.cleanup()
+
+    def call(self,path,data,secret='secret'):
+        req=Request('http://127.0.0.1:'+str(self.server.server_port)+path,data=json.dumps(data).encode(),
+                    headers={'X-Telegram-Bot-Api-Secret-Token':secret})
+        try:
+            with urlopen(req) as r:return r.status,r.read().decode()
+        except HTTPError as r:return r.code,r.read().decode()
+
+    def event(self,user=42):
+        return dict(update_id=1,message={'from':{'id':user},'chat':{'id':user,'type':'private'},'text':'/day'})
+
+    def test_telegram_secret_and_owner(self):
+        self.assertEqual(self.call('/telegram/webhook',self.event(),secret='wrong')[0],403)
+        self.call('/telegram/webhook',self.event(99))
+        self.assertEqual(self.sent,[])
+
+    def test_telegram_retry(self):
+        self.call('/telegram/webhook',self.event());self.call('/telegram/webhook',self.event())
+        self.assertEqual(len(self.sent),1)
+
+    def test_vk_confirmation(self):
+        self.assertEqual(self.call('/vk/webhook',dict(type='confirmation',group_id=10,secret='vksecret')),(200,'confirm'))
+        self.assertEqual(self.sent,[])
+
+    def test_vk_retry(self):
+        data=dict(type='message_new',group_id=10,secret='vksecret',event_id='test',object={'message':{'from_id':42,'peer_id':42,'text':'/day'}})
+        self.call('/vk/webhook',data);self.call('/vk/webhook',data)
+        self.assertEqual(len(self.sent),1)

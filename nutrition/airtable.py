@@ -72,6 +72,8 @@ class Client:
 
 
 def same_value(key, left, right):
+    if key == 'Approx' and right is False and left is None:
+        return True
     if key == 'LastUpdate' and left and right:
         return datetime.fromisoformat(left.replace('Z', '+00:00')) == datetime.fromisoformat(right.replace('Z', '+00:00'))
     return select(left) == right
@@ -195,7 +197,7 @@ class AirtableJournal:
                       Source=source_type, Notes=json.dumps(portion.record(), ensure_ascii=False))
         fields.update({n: float(v) for n, v in zip(('Kcal','Protein','Fat','Carbs'), portion.total.values().values())})
         old = next((r for r in snapshot['meals'] if r['fields']['MealItemKey'] == key), None)
-        if old and all(select(old['fields'].get(k)) == v for k,v in fields.items()):
+        if old and all(same_value(k, old['fields'].get(k), v) for k,v in fields.items()):
             # Do not return before checking/recovering aggregates after a partial write.
             changed = False
         else:
@@ -203,7 +205,7 @@ class AirtableJournal:
             if old and select(old['fields'].get('Status')) == 'CONFIRMED' and not correction:
                 raise SyncError('Confirmed item requires explicit correction')
         if changed:
-            fields['LastUpdate'] = datetime.now(timezone.utc).isoformat()
+            fields['LastUpdate'] = datetime.now(timezone.utc).isoformat(timespec='milliseconds')
             self._write_verified('Meals', fields, old['id'] if old else None, 'MealItemKey', key)
         after = self.read(day)
         latest = after['state']['fields'] if after['state'] else {}
@@ -216,7 +218,7 @@ class AirtableJournal:
         dirty = any(latest.get(k) != v for k,v in aggregate.items())
         if changed or dirty or not after['state']:
             aggregate.update(DayKey=day, Date=day, Version=version+1,
-                             LastUpdate=datetime.now(timezone.utc).isoformat())
+                             LastUpdate=datetime.now(timezone.utc).isoformat(timespec='milliseconds'))
             if not after['state']:
                 aggregate.update(Status='ACTIVE', CaloriesGoal=1957, ProteinMin=150,
                                  ProteinMax=160, FatMin=70, FatMax=80, CarbMax=170)
