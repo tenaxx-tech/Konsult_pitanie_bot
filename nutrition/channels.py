@@ -24,7 +24,7 @@ def answer(text, remote_factory=lambda:AirtableJournal(Client())):
     command, _, payload=text.strip().partition(' ')
     command=command.lower()
     if command in ('/start','/help','помощь'):
-        return 'Дневник питания: /day — сегодня; /calc JSON — расчёт порций. Свободный диалог и фото пока не подключены.'
+        return 'Консультант по питанию: /day — дневник; /calc JSON — расчёт. Можно задавать вопросы обычным текстом. Автоматическая запись еды и фото пока не подключены.'
     if command in ('/day','сегодня'):
         data=remote_factory().read(today())
         state=data['state']['fields'] if data['state'] else {}
@@ -41,7 +41,10 @@ def answer(text, remote_factory=lambda:AirtableJournal(Client())):
         result=calculate(json.loads(payload)['portions'])
         n=result['total']
         return f"{'≈ ' if result['estimated'] else ''}{n['kcal']} ккал · Б {n['protein']} · Ж {n['fat']} · У {n['carbs']} г"
-    return 'Свободный диалог пока не подключён. Отправьте /day для дневника или /help для команд.'
+    if os.environ.get('OPENAI_API_KEY'):
+        from .openai_chat import answer as chat
+        return chat(text, remote_factory().read(today()), os.environ.get('CHANNEL_DB','channels.sqlite3'))
+    return 'OpenAI пока не настроен. Отправьте /day для дневника.'
 
 
 def send(platform,peer,text,event_id):
@@ -123,7 +126,7 @@ def handler(database, responder=answer, sender=send):
                     try:
                         text=responder(message['text'])
                     except Exception:
-                        text='Не удалось прочитать или рассчитать данные. Дневник не изменён.'
+                        text='Не удалось получить ответ. Запись еды в этой версии не подключена. /day покажет сохранённый дневник.'
                     sender(platform,peer,text,event)
                     db.execute('INSERT INTO delivered VALUES (?)',(event,))
                 self.reply(200,'ok')
@@ -149,6 +152,12 @@ def main():
     with sqlite3.connect(database) as db:
         db.execute('CREATE TABLE IF NOT EXISTS delivered(event TEXT PRIMARY KEY)')
     server=ThreadingHTTPServer((os.environ.get('API_HOST','127.0.0.1'),int(os.environ.get('PORT','8081'))),handler(database))
+    if os.environ.get('OPENAI_API_KEY'):
+        from .openai_chat import probe
+        try:
+            print(probe(),flush=True)
+        except SyncError as exc:
+            print(str(exc),flush=True)
     print('Nutrition channels ready',flush=True)
     server.serve_forever()
 
