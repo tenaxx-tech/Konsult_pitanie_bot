@@ -143,7 +143,7 @@ class AirtableJournal:
         state = self.read_table('DailyState', "{DayKey}='"+day+"'")
         if len(state) > 1:
             raise SyncError('Duplicate DailyState')
-        rows = self.read_table('Meals', "{Date}='"+day+"'")
+        rows = self.read_table('Meals', "IS_SAME({Date}, DATETIME_PARSE('"+day+"'), 'day')")
         eaten, forecast = totals(rows, day)
         return {'day': day, 'state': state[0] if state else None, 'meals': rows,
                 'computed_eaten': eaten.values(True), 'computed_forecast': forecast.values(True),

@@ -25,8 +25,12 @@ class Fake:
     def records(self, table, formula=None):
         rows = self.rows[table]
         if formula:
-            field, value = formula.split('=')
-            rows = [r for r in rows if r['fields'].get(field.strip('{}')) == value.strip("'")]
+            if formula.startswith('IS_SAME('):
+                field, value = 'Date', formula.split("'")[1]
+            else:
+                field, value = formula.split('=')
+                field, value = field.strip('{}'), value.strip("'")
+            rows = [r for r in rows if r['fields'].get(field) == value]
         return copy.deepcopy(rows)
 
     def write(self, table, fields, record_id=None):
