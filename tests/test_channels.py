@@ -39,6 +39,7 @@ class Tests(unittest.TestCase):
     def event(self,user=42):
         return dict(update_id=1,message={'from':{'id':user},'chat':{'id':user,'type':'private'},'text':'/day'})
 
+
     def test_telegram_secret_and_owner(self):
         self.assertEqual(self.call('/telegram/webhook',self.event(),secret='wrong')[0],403)
         self.call('/telegram/webhook',self.event(99))
@@ -56,3 +57,13 @@ class Tests(unittest.TestCase):
         data=dict(type='message_new',group_id=10,secret='vksecret',event_id='test',object={'message':{'from_id':42,'peer_id':42,'text':'/day'}})
         self.call('/vk/webhook',data);self.call('/vk/webhook',data)
         self.assertEqual(len(self.sent),1)
+
+
+
+class DialogueConfigurationTests(unittest.TestCase):
+    def test_dialogue_reports_missing_groq_key(self):
+        from nutrition.channels import answer
+        with patch.dict(os.environ, {'GROQ_API_KEY': ''}):
+            result = answer('Подскажи меню', remote_factory=lambda: self.fail('Airtable should not be read'))
+        self.assertIn('GROQ_API_KEY', result)
+        self.assertIn('/day', result)
