@@ -2,6 +2,7 @@
 import json
 import os
 import sqlite3
+import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from .airtable import SyncError
@@ -32,6 +33,16 @@ def request(body):
             result=json.load(response)
     except HTTPError as exc:
         reason={401:'invalid key',403:'access denied',429:'quota or rate limit',400:'invalid request or model',404:'model not found'}.get(exc.code,'service error')
+        if exc.code == 429:
+            try:
+                code = json.loads(exc.read(16384)).get('error', {}).get('code')
+            except (ValueError, OSError, AttributeError, TypeError):
+                code = None
+            if code in ('insufficient_quota', 'credit_balance_exhausted',
+                        'organization_spend_limit_exceeded', 'project_spend_limit_exceeded'):
+                reason = 'billing quota exhausted'
+            elif code == 'rate_limit_exceeded':
+                reason = 'rate limit exceeded'
         raise SyncError('OpenAI HTTP '+str(exc.code)+': '+reason) from None
     except (URLError, OSError, TimeoutError):
         raise SyncError('OpenAI network error') from None
@@ -47,7 +58,29 @@ def probe():
     return 'OpenAI ready: '+os.environ.get('OPENAI_MODEL','gpt-4.1-mini')
 
 
+def reserve_request(database):
+    """Persist attempts across restarts; a rolling window avoids midnight bursts."""
+    now = time.time()
+    limit = int(os.environ.get('OPENAI_DAILY_LIMIT', '40'))
+    if not 0 <= limit <= 40:
+        raise SyncError('OPENAI_DAILY_LIMIT must be between 0 and 40')
+    with sqlite3.connect(database, timeout=10) as db:
+        db.execute('CREATE TABLE IF NOT EXISTS ai_attempts (at REAL NOT NULL)')
+        db.execute('BEGIN IMMEDIATE')
+        db.execute('DELETE FROM ai_attempts WHERE at <= ?', (now - 86400,))
+        count, last = db.execute('SELECT COUNT(*), MAX(at) FROM ai_attempts').fetchone()
+        if count >= limit:
+            return 'Лимит ИИ-запросов за последние 24 часа исчерпан. /day и /calc доступны.'
+        if last is not None and now - last < 10:
+            return 'Подождите 10 секунд между ИИ-запросами. /day и /calc доступны.'
+        db.execute('INSERT INTO ai_attempts VALUES (?)', (now,))
+    return None
+
+
 def answer(text, snapshot, database):
+    blocked = reserve_request(database)
+    if blocked:
+        return blocked
     day=snapshot['day']
     with sqlite3.connect(database) as db:
         db.execute('CREATE TABLE IF NOT EXISTS conversation (id INTEGER PRIMARY KEY, day TEXT, role TEXT, content TEXT)')
@@ -56,7 +89,15 @@ def answer(text, snapshot, database):
     messages=[{'role':'user','content':'Текущий контекст Airtable:\n'+json.dumps(context,ensure_ascii=False)}]
     messages += [{'role':role,'content':content} for role,content in rows]
     messages.append({'role':'user','content':text[:12000]})
-    result=request({'instructions':POLICY,'input':messages,'max_output_tokens':1800})
+    try:
+        result=request({'instructions':POLICY,'input':messages,'max_output_tokens':1800})
+    except SyncError as exc:
+        error = str(exc)
+        if 'billing quota exhausted' in error:
+            return 'OpenAI не разрешил запрос: исчерпан баланс или бюджет API. Нужна проверка оплаты и лимита расходов. /day и /calc доступны.'
+        if 'HTTP 429' in error:
+            return 'OpenAI временно отклонил запрос из-за квоты или частоты обращений. /day и /calc доступны.'
+        raise
     with sqlite3.connect(database) as db:
         db.executemany('INSERT INTO conversation(day,role,content) VALUES (?,?,?)',[(day,'user',text[:12000]),(day,'assistant',result)])
     return result[:3800]

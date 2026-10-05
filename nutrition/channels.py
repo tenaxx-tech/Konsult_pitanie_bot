@@ -152,12 +152,6 @@ def main():
     with sqlite3.connect(database) as db:
         db.execute('CREATE TABLE IF NOT EXISTS delivered(event TEXT PRIMARY KEY)')
     server=ThreadingHTTPServer((os.environ.get('API_HOST','127.0.0.1'),int(os.environ.get('PORT','8081'))),handler(database))
-    if os.environ.get('OPENAI_API_KEY'):
-        from .openai_chat import probe
-        try:
-            print(probe(),flush=True)
-        except SyncError as exc:
-            print(str(exc),flush=True)
     print('Nutrition channels ready',flush=True)
     server.serve_forever()
 
