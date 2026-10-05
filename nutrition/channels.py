@@ -35,16 +35,16 @@ def answer(text, remote_factory=lambda:AirtableJournal(Client())):
             values={k:str(state.get(n,'нет данных')) for k,n in zip(('kcal','protein','fat','carbs'),('EatenKcal','EatenProtein','EatenFat','EatenCarbs'))}
         else:
             values=data['computed_eaten']
-        return (f"Дата: {data['day']}\nФакт: {values['kcal']} ккал · Б {values['protein']} · Ж {values['fat']} · У {values['carbs']} г\n"
+        return (f"Дата: {data['day']}\\nФакт: {values['kcal']} ккал · Б {values['protein']} · Ж {values['fat']} · У {values['carbs']} г\\n"
                 f"Позиций: {len(data['meals'])}. Версия: {state.get('Version',0)}.")
     if command=='/calc':
         result=calculate(json.loads(payload)['portions'])
         n=result['total']
         return f"{'≈ ' if result['estimated'] else ''}{n['kcal']} ккал · Б {n['protein']} · Ж {n['fat']} · У {n['carbs']} г"
-    if os.environ.get('OPENAI_API_KEY'):
+    if os.environ.get('GROQ_API_KEY'):
         from .openai_chat import answer as chat
         return chat(text, remote_factory().read(today()), os.environ.get('CHANNEL_DB','channels.sqlite3'))
-    return 'OpenAI пока не настроен. Отправьте /day для дневника.'
+    return 'ИИ пока не настроен: добавьте GROQ_API_KEY в секреты сервера. /day и /calc доступны.'
 
 
 def send(platform,peer,text,event_id):
