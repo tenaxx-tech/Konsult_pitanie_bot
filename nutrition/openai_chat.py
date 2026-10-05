@@ -110,7 +110,7 @@ def answer(text, snapshot, database):
     context = {k: snapshot[k] for k in (
         'day', 'state', 'meals', 'computed_eaten', 'computed_forecast', 'protocols'
     )}
-    messages = [{'role': 'user', 'content': 'Текущий контекст Airtable:\\n' + json.dumps(context, ensure_ascii=False)}]
+    messages = [{'role': 'user', 'content': 'Текущий контекст Airtable:\n' + json.dumps(context, ensure_ascii=False)}]
     messages += [{'role': role, 'content': content} for role, content in rows]
     messages.append({'role': 'user', 'content': text[:12000]})
     try:
