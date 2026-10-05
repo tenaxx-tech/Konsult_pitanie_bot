@@ -3,7 +3,6 @@ import json
 import os
 import re
 import sqlite3
-import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -88,29 +87,8 @@ def probe():
     return 'Gemini ready: ' + os.environ.get('GEMINI_MODEL', DEFAULT_MODEL)
 
 
-def reserve_request(database):
-    """Persist attempts across restarts; a rolling window avoids midnight bursts."""
-    now = time.time()
-    limit = int(os.environ.get('AI_DAILY_LIMIT', os.environ.get('OPENAI_DAILY_LIMIT', '40')))
-    if not 0 <= limit <= 40:
-        raise SyncError('AI_DAILY_LIMIT must be between 0 and 40')
-    with sqlite3.connect(database, timeout=10) as db:
-        db.execute('CREATE TABLE IF NOT EXISTS ai_attempts (at REAL NOT NULL)')
-        db.execute('BEGIN IMMEDIATE')
-        db.execute('DELETE FROM ai_attempts WHERE at <= ?', (now - 86400,))
-        count, last = db.execute('SELECT COUNT(*), MAX(at) FROM ai_attempts').fetchone()
-        if count >= limit:
-            return 'Лимит ИИ-запросов за последние 24 часа исчерпан. /day и /calc доступны.'
-        if last is not None and now - last < 10:
-            return 'Подождите 10 секунд между ИИ-запросами. /day и /calc доступны.'
-        db.execute('INSERT INTO ai_attempts VALUES (?)', (now,))
-    return None
-
 
 def answer(text, snapshot, database):
-    blocked = reserve_request(database)
-    if blocked:
-        return blocked
     day = snapshot['day']
     with sqlite3.connect(database) as db:
         db.execute('CREATE TABLE IF NOT EXISTS conversation (id INTEGER PRIMARY KEY, day TEXT, role TEXT, content TEXT)')
