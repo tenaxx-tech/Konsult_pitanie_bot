@@ -1,5 +1,6 @@
 import io
 import json
+import tempfile
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -42,6 +43,22 @@ class GeminiTests(unittest.TestCase):
             with self.assertRaisesRegex(chat.SyncError, 'GEMINI_API_KEY is missing'):
                 chat.request({'input': 'test'})
         call.assert_not_called()
+
+    def test_chat_keeps_same_day_history_and_isolates_new_day(self):
+        calls = []
+        snapshot = {
+            'day': '2026-10-05', 'state': None, 'meals': [],
+            'computed_eaten': {}, 'computed_forecast': {}, 'protocols': {},
+        }
+        with patch.object(chat, 'reserve_request', return_value=None), \
+             tempfile.NamedTemporaryFile() as db, \
+             patch.object(chat, 'request', side_effect=lambda body: calls.append(body) or 'Ответ'):
+            chat.answer('Первый вопрос', snapshot, db.name)
+            chat.answer('Второй вопрос', snapshot, db.name)
+            self.assertIn('Первый вопрос', json.dumps(calls[-1], ensure_ascii=False))
+            snapshot['day'] = '2026-10-06'
+            chat.answer('Новый день', snapshot, db.name)
+            self.assertNotIn('Первый вопрос', json.dumps(calls[-1], ensure_ascii=False))
 
     def test_http_errors_do_not_leak_key(self):
         error = HTTPError('https://example.invalid', 429, 'secret-key', {}, None)
