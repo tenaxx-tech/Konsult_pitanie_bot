@@ -35,7 +35,7 @@ def answer(text, remote_factory=lambda:AirtableJournal(Client())):
             values={k:str(state.get(n,'нет данных')) for k,n in zip(('kcal','protein','fat','carbs'),('EatenKcal','EatenProtein','EatenFat','EatenCarbs'))}
         else:
             values=data['computed_eaten']
-        return (f"Дата: {data['day']}\\nФакт: {values['kcal']} ккал · Б {values['protein']} · Ж {values['fat']} · У {values['carbs']} г\\n"
+        return (f"Дата: {data['day']}\nФакт: {values['kcal']} ккал · Б {values['protein']} · Ж {values['fat']} · У {values['carbs']} г\n"
                 f"Позиций: {len(data['meals'])}. Версия: {state.get('Version',0)}.")
     if command=='/calc':
         result=calculate(json.loads(payload)['portions'])
