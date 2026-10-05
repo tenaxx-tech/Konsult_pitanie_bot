@@ -50,8 +50,7 @@ class GeminiTests(unittest.TestCase):
             'day': '2026-10-05', 'state': None, 'meals': [],
             'computed_eaten': {}, 'computed_forecast': {}, 'protocols': {},
         }
-        with patch.object(chat, 'reserve_request', return_value=None), \
-             tempfile.NamedTemporaryFile() as db, \
+        with tempfile.NamedTemporaryFile() as db, \
              patch.object(chat, 'request', side_effect=lambda body: calls.append(body) or 'Ответ'):
             chat.answer('Первый вопрос', snapshot, db.name)
             chat.answer('Второй вопрос', snapshot, db.name)
