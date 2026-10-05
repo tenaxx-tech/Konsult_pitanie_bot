@@ -30,7 +30,7 @@ class GeminiTests(unittest.TestCase):
         self.assertEqual(request.get_header('X-goog-api-key'), 'secret-key')
         self.assertNotIn('secret-key', request.full_url)
         payload = json.loads(request.data)
-        self.assertEqual(payload['system_instruction']['parts'][0]['text'], 'system rules')
+        self.assertEqual(payload['systemInstruction']['parts'][0]['text'], 'system rules')
         self.assertEqual(payload['generationConfig']['maxOutputTokens'], 24)
         self.assertEqual(payload['contents'], [
             {'role': 'user', 'parts': [{'text': 'question'}]},
