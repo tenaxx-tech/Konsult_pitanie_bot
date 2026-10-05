@@ -48,7 +48,7 @@ def request(body):
     user_input = source.pop('input', '')
     messages = user_input if isinstance(user_input, list) else [{'role': 'user', 'content': str(user_input)}]
     payload = {
-        'system_instruction': {'parts': [{'text': str(instructions)}]},
+        'systemInstruction': {'parts': [{'text': str(instructions)}]},
         'contents': _contents(messages),
         'generationConfig': {'maxOutputTokens': source.get('max_output_tokens', 1800)},
     }
