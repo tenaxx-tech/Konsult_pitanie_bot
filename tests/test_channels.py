@@ -68,7 +68,6 @@ class DialogueConfigurationTests(unittest.TestCase):
         self.assertIn('GROQ_API_KEY', result)
         self.assertIn('/day', result)
 
-
     def test_empty_calc_returns_usage_without_reading_airtable(self):
         from nutrition.channels import answer
         result = answer('/calc', remote_factory=lambda: self.fail('Airtable should not be read'))
@@ -89,3 +88,40 @@ class DialogueConfigurationTests(unittest.TestCase):
                    '"source":"этикетка"}]}')
         result = answer(payload, remote_factory=lambda: self.fail('Airtable should not be read'))
         self.assertEqual(result, '120.0 ккал · Б 10.0 · Ж 5.0 · У 8.0 г')
+
+
+class SharedDiaryTests(unittest.TestCase):
+    def test_sync_rereads_external_updates_without_ai_or_writes(self):
+        from nutrition.channels import answer
+        from unittest.mock import Mock
+        data = {'day':'2026-10-06','state':{'fields':{'Version':5,'CaloriesGoal':1957}},
+                'computed_eaten':{'kcal':'1373.4','protein':'92.7','fat':'64','carbs':'108.7'},
+                'meals':[{'fields':{'Status':'CONFIRMED'}}]}
+        remote = Mock()
+        remote.read.side_effect = [data, {**data, 'state':{'fields':{'Version':6,'CaloriesGoal':1957}},
+            'computed_eaten':{**data['computed_eaten'],'kcal':'1473.4'}}]
+        with patch('nutrition.channels.today',return_value='2026-10-06'), \
+             patch('nutrition.gigachat_chat.answer') as ai:
+            first = answer('/sync',remote_factory=lambda:remote)
+            second = answer('/sync',remote_factory=lambda:remote)
+        self.assertIn('583.6 ккал',first)
+        self.assertIn('57.3–67.3 г',first)
+        self.assertIn('6.0–16.0 г',first)
+        self.assertIn('483.6 ккал',second)
+        self.assertIn('Версия: 6',second)
+        self.assertEqual(remote.read.call_count,2)
+        remote.upsert.assert_not_called()
+        ai.assert_not_called()
+
+    def test_closed_sync_uses_preserved_totals(self):
+        from nutrition.channels import answer
+        from unittest.mock import Mock
+        remote = Mock()
+        remote.read.return_value = {'day':'2026-10-06','state':{'fields':{'Version':7,'Status':'CLOSED',
+            'EatenKcal':1800,'EatenProtein':150,'EatenFat':75,'EatenCarbs':130}},
+            'computed_eaten':{'kcal':0},'meals':[]}
+        result = answer('/sync',remote_factory=lambda:remote)
+        self.assertIn('1800 ккал',result)
+        self.assertIn('День закрыт',result)
+        self.assertNotIn('Остаток калорий',result)
+        remote.upsert.assert_not_called()
