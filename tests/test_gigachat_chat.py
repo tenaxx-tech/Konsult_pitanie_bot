@@ -39,6 +39,18 @@ class Tests(unittest.TestCase):
         self.assertEqual(payload['messages'][0], {'role': 'system', 'content': 'policy'})
         self.assertEqual(payload['messages'][1], {'role': 'user', 'content': 'hello'})
 
+    def test_extract_intake_uses_json_schema_and_photo_model(self):
+        expected = {'action':'proposal','reply':'Похоже на обед','day':'2026-10-06',
+                    'meal':'LUNCH','items':[]}
+        with patch.dict('os.environ', GIGACHAT_AUTHORIZATION_KEY='private-key'):
+            with patch.object(chat, 'request', return_value=json.dumps(expected)) as call:
+                result = chat.extract_intake('Что на фото?', '2026-10-06', {}, ['file_12345678'])
+        body = call.call_args.args[0]
+        self.assertEqual(result, expected)
+        self.assertEqual(body['model'], chat.DEFAULT_VISION_MODEL)
+        self.assertEqual(body['response_format']['type'], 'json_schema')
+        self.assertEqual(body['input'][1]['attachments'], ['file_12345678'])
+
     def test_access_token_is_cached(self):
         with patch.dict('os.environ', GIGACHAT_AUTHORIZATION_KEY='private-key'):
             with patch.object(chat, 'urlopen', side_effect=[
@@ -75,4 +87,4 @@ class Tests(unittest.TestCase):
             snapshot['day'] = '2026-10-07'
             chat.answer('Новый день', snapshot, db.name)
             self.assertNotIn('Первый вопрос', json.dumps(calls[-1], ensure_ascii=False))
-            self.assertIn('НЕТ инструмента записи', calls[-1]['instructions'])
+            self.assertIn('Сам этот диалог не записывает данные', calls[-1]['instructions'])

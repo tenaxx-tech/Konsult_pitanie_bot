@@ -230,7 +230,8 @@ class AirtableJournal:
 
 def main():
     parser = argparse.ArgumentParser(description='Airtable: чтение и явная запись позиции')
-    parser.add_argument('--day', default=datetime.now(ZoneInfo('Asia/Omsk')).date().isoformat())
+    parser.add_argument('--day', default=datetime.now(ZoneInfo(
+        os.environ.get('NUTRITION_TIMEZONE', 'Asia/Yekaterinburg'))).date().isoformat())
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('read')
     write = commands.add_parser('upsert')
