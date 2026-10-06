@@ -195,6 +195,29 @@ def _validation_error(text):
     return None
 
 
+def plan_repair_request(base_policy, text, snapshot, messages, response):
+    """Build one bounded correction request after an invalid plan draft."""
+    problem = _validation_error(response) if PLAN_REQUEST.search(text or "") else None
+    if not problem:
+        return None
+    repair_instruction = (
+        "ПОВТОРНАЯ ПРОВЕРКА ПЛАНА: предыдущий вариант не прошёл программную проверку. "
+        f"Причина: {problem} Пересчитай план полностью, опираясь на VERIFIED DAY FACTS "
+        "в системных инструкциях. Исправь данные позиции, затем заново проверь суммы "
+        "каждого приёма пищи и остаток дня. Верни исправленное меню с КБЖУ; не повторяй "
+        "подтверждённую еду и не утверждай, что записал её. Если нельзя составить меню "
+        "согласованно, коротко укажи, каких данных не хватает."
+    )
+    return {
+        "instructions": request_instructions(base_policy, text, snapshot),
+        "input": list(messages) + [
+            {"role": "assistant", "content": response},
+            {"role": "user", "content": repair_instruction},
+        ],
+        "max_output_tokens": 1800,
+    }
+
+
 def validated_plan_reply(text, snapshot, response):
     """Replace a numerically inconsistent plan with verified diary facts and budget."""
     if not PLAN_REQUEST.search(text or ""):
