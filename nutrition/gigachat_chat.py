@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from .airtable import SyncError
-from .planning import request_context, request_instructions
+from .planning import request_context, request_instructions, validated_plan_reply
 
 POLICY = '''Ты персональный консультант по питанию. Отвечай по-русски, спокойно и кратко.
 Цель пользователя — 82 кг с сохранением мышц. Цели: <=1957 ккал, Б150–160, Ж70–80, У<=170 г.
@@ -286,6 +286,7 @@ def answer(text, snapshot, database):
         if 'quota or rate limit exceeded' in str(exc):
             return 'GigaChat временно отклонил запрос по квоте или частоте обращений. Попробуйте позже; /day и /calc доступны.'
         raise
+    result = validated_plan_reply(text, context, result)
     with sqlite3.connect(database) as db:
         db.executemany(
             'INSERT INTO conversation(day,role,content) VALUES (?,?,?)',
