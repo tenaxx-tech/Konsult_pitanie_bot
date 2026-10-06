@@ -40,7 +40,13 @@ PLANNING_RULES = """\
 4. Проверяй сложение каждой позиции, приёма пищи, будущего меню и итога дня. Ккал и БЖУ
    должны происходить из одного источника данных. Не выдавай две несовместимые цифры:
    если КБЖУ не согласуются в пределах округления, перепроверь источник или обозначь оценку.
-5. Не показывай уже съеденные блюда как совет на остаток дня. Если в VERIFIED нет точного
+5. VERIFIED означает сохранённый факт и проверенное сложение, а не проверку этикеток.
+   Несогласованность КБЖУ уже съеденных продуктов не блокирует план оставшейся еды:
+   используй сохранённый итог без изменения, укажи, что остаток предварительный.
+   Не утверждай расхождение с данными производителя, если этикетки не предоставлены.
+   Для НОВЫХ блюд используй согласованные справочные оценки, явно обозначай их как
+   приблизительные. Не требуй точных этикеток всего съеденного для планирования ужина.
+6. Не показывай уже съеденные блюда как совет на остаток дня. Если в VERIFIED нет точного
    факта, скажи об этом и попроси уточнение, вместо точного расчёта на выдуманных данных.
 """
 
@@ -195,9 +201,21 @@ def _validation_error(text):
     return None
 
 
+def _plan_problem(response):
+    problem = _validation_error(response)
+    if problem:
+        return problem
+    lower = (response or "").lower().replace("ё", "е")
+    if (any(word in lower for word in ("не смог", "невозможно", "не могу", "нужны точные"))
+            and any(word in lower for word in ("кбжу", "бжу", "калорийност"))
+            and any(word in lower for word in ("не соответств", "не совпад", "не соглас", "несоглас", "согласующ"))):
+        return "Отказ от плана из-за несогласованности данных вместо расчёта новой еды."
+    return None
+
+
 def plan_repair_request(base_policy, text, snapshot, messages, response):
     """Build one bounded correction request after an invalid plan draft."""
-    problem = _validation_error(response) if PLAN_REQUEST.search(text or "") else None
+    problem = _plan_problem(response) if PLAN_REQUEST.search(text or "") else None
     if not problem:
         return None
     repair_instruction = (
@@ -205,7 +223,7 @@ def plan_repair_request(base_policy, text, snapshot, messages, response):
         f"Причина: {problem} Пересчитай план полностью, опираясь на VERIFIED DAY FACTS "
         "в системных инструкциях. Исправь данные позиции, затем заново проверь суммы "
         "каждого приёма пищи и остаток дня. Верни исправленное меню с КБЖУ; не повторяй "
-        "подтверждённую еду и не утверждай, что записал её. Если нельзя составить меню "
+        "подтверждённую еду и не утверждай, что записал её. Не перепроверяй уже съеденное по несуществующим этикеткам. Сохранённый итог — исходная оценка. Для новых продуктов разрешены явно обозначенные справочные оценки. Если нельзя составить меню "
         "согласованно, коротко укажи, каких данных не хватает."
     )
     return {
@@ -222,7 +240,7 @@ def validated_plan_reply(text, snapshot, response):
     """Replace a numerically inconsistent plan with verified diary facts and budget."""
     if not PLAN_REQUEST.search(text or ""):
         return response
-    problem = _validation_error(response)
+    problem = _plan_problem(response)
     if not problem:
         return response
     eaten = snapshot.get("computed_eaten") or {}
@@ -237,4 +255,6 @@ def validated_plan_reply(text, snapshot, response):
     budget = (f"до цели осталось {_fmt(remaining)} ккал"
               if remaining >= 0 else f"цель превышена на {_fmt(-remaining)} ккал")
     return (f"Не стал отправлять меню: {problem} Проверенный факт за {snapshot.get('day', 'сегодня')} — "
-            f"{_fmt(actual)} ккал; {budget}. Уже съеденное повторно не учитываю.")
+            f"{_fmt(actual)} ккал; {budget}. Уже съеденное повторно не учитываю. "
+            "Для конкретного варианта напишите, какие продукты есть на ужин и их вес. "
+            "Этикетки всего уже съеденного не требуются; можно использовать приблизительный расчёт.")
