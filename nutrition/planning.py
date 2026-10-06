@@ -206,9 +206,9 @@ def _plan_problem(response):
     if problem:
         return problem
     lower = (response or "").lower().replace("ё", "е")
-    if (any(word in lower for word in ("не смог", "невозможно", "не могу", "нужны точные"))
+    if (any(word in lower for word in ("не смог", "не удалось", "невозможно", "не могу", "нужны точные", "необходимы точные"))
             and any(word in lower for word in ("кбжу", "бжу", "калорийност"))
-            and any(word in lower for word in ("не соответств", "не совпад", "не соглас", "несоглас", "согласующ"))):
+            and any(word in lower for word in ("не соответств", "не совпад", "не соглас", "несоглас", "согласующ", "согласовать"))):
         return "Отказ от плана из-за несогласованности данных вместо расчёта новой еды."
     return None
 

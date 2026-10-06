@@ -146,6 +146,17 @@ class PlanningContextTests(unittest.TestCase):
         self.assertIn("Этикетки всего уже съеденного не требуются", fallback)
         self.assertEqual(validated_plan_reply("Привет", snapshot(), refusal), refusal)
 
+    def test_provided_unable_to_agree_refusal_is_not_sent_to_user(self):
+        refusal = ("Не удалось согласовать предоставленные данные по КБЖУ продуктов с заданными "
+                   "ограничениями. Калорийность и состав продуктов в подтвержденном рационе "
+                   "не совпадают с заявленными производителем значениями. Чтобы составить "
+                   "корректный план питания, необходимы точные и согласующиеся данные.")
+        self.assertIsNotNone(plan_repair_request("policy", "Составь меню", snapshot(), [], refusal))
+        safe = validated_plan_reply("Составь меню", snapshot(), refusal)
+        self.assertNotIn("производителем", safe)
+        self.assertIn("583.6 ккал", safe)
+        self.assertIn("какие продукты есть", safe)
+
     def test_consistent_plan_remains_unchanged(self):
         response = "Завтрак:\n- Каша — 100 ккал, Б10, Ж2, У10\nВсего: 100 ккал, Б10, Ж2, У10"
         self.assertEqual(
