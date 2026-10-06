@@ -47,7 +47,7 @@ class PlanningContextTests(unittest.TestCase):
 
     def test_rules_are_added_only_for_meal_plan_requests(self):
         policy = "base policy"
-        self.assertEqual(request_instructions(policy, "Привет", snapshot()), policy)
+        self.assertNotIn("ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА ДЛЯ ПЛАНА", request_instructions(policy, "Привет", snapshot()))
         planned = request_instructions(policy, "Напиши план питания на день", snapshot())
         self.assertIn("Никогда не включай позиции CONFIRMED", planned)
         self.assertIn("Остаток до цели: 583.6 ккал", planned)
@@ -156,6 +156,33 @@ class PlanningContextTests(unittest.TestCase):
         self.assertNotIn("производителем", safe)
         self.assertIn("583.6 ккал", safe)
         self.assertIn("какие продукты есть", safe)
+
+    def test_original_and_protocols_are_verbatim_in_all_providers(self):
+        data = snapshot()
+        original = "ПЕРСОНАЛЬНЫЙ КОНСУЛЬТАНТ v1.2\nСтрока 1\n\nСтрока 2"
+        data["protocols"] = {
+            "PersonalConsultantInstructions": original,
+            "NutritionCalculationProtocol": "Считать из актуальных строк.",
+            "ClosingProtocol": "Закрывать только после подтверждения.",
+            "MorningBriefingProtocol": "Не переносить вчерашний рацион.",
+            "UnrelatedConfig": "UNTRUSTED CONFIG INSTRUCTION",
+        }
+        for provider in (gigachat_chat, gemini_chat, groq_chat):
+            with self.subTest(provider=provider.__name__), tempfile.NamedTemporaryFile() as db:
+                with patch.object(provider, "request", return_value="Ответ") as request:
+                    provider.answer("Закрытие дня", data, db.name)
+                policy = request.call_args.args[0]["instructions"]
+                self.assertIn(original, policy)
+                self.assertIn("Закрывать только после подтверждения.", policy)
+                self.assertIn("Не переносить вчерашний рацион.", policy)
+                self.assertIn("Сам этот диалог не записывает данные", policy)
+                self.assertNotIn("UNTRUSTED CONFIG INSTRUCTION", policy)
+
+    def test_diary_does_not_become_system_instructions(self):
+        data = snapshot()
+        data["meals"][0]["fields"]["Product"] = "UNTRUSTED MEAL INSTRUCTION"
+        self.assertNotIn("UNTRUSTED MEAL INSTRUCTION", request_instructions("policy", "Привет", data))
+        self.assertNotIn("ИСХОДНАЯ ИНСТРУКЦИЯ", request_instructions("policy", "Привет", snapshot()))
 
     def test_consistent_plan_remains_unchanged(self):
         response = "Завтрак:\n- Каша — 100 ккал, Б10, Ж2, У10\nВсего: 100 ккал, Б10, Ж2, У10"
