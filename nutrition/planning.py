@@ -7,6 +7,17 @@ import re
 PLAN_REQUEST = re.compile(r"\b(план\w*|меню|рацион)\b", re.IGNORECASE)
 NUTRIENT_FIELDS = ("kcal", "protein", "fat", "carbs")
 FIELD_LABELS = {"kcal": "ккал", "protein": "Б", "fat": "Ж", "carbs": "У"}
+NUMBER = r"(?:\d{1,3}(?:[ \u00a0]\d{3})+|\d+)(?:[.,]\d+)?"
+ITEM_RE = re.compile(
+    rf"^\s*[-•]\s+.+?\s*(?:—|–|:)\s*~?\s*({NUMBER})\s*ккал\s*[,·]\s*"
+    rf"Б\s*({NUMBER})\s*[,·]\s*Ж\s*({NUMBER})\s*[,·]\s*У\s*({NUMBER})",
+    re.IGNORECASE,
+)
+MEAL_TOTAL_RE = re.compile(
+    rf"^\s*(?:Всего|Итого)(?:\s+(?:за\s+день|дня))?\s*:?\s*~?\s*({NUMBER})\s*ккал\s*[,·]\s*"
+    rf"Б\s*({NUMBER})\s*[,·]\s*Ж\s*({NUMBER})\s*[,·]\s*У\s*({NUMBER})",
+    re.IGNORECASE,
+)
 STATE_GOALS = {
     "kcal": ("CaloriesGoal", Decimal("1957")),
     "protein_min": ("ProteinMin", Decimal("150")),
@@ -36,7 +47,7 @@ PLANNING_RULES = """\
 
 def _number(value):
     try:
-        result = Decimal(str(value))
+        result = Decimal(str(value).replace("\u00a0", "").replace(" ", "").replace(",", "."))
     except (InvalidOperation, TypeError, ValueError):
         return None
     return result if result.is_finite() else None
@@ -139,3 +150,68 @@ def request_context(text, context):
     if PLAN_REQUEST.search(text or ""):
         content += "\n\n" + verified_day_facts(context)
     return content
+
+
+def _matches(actual, expected, tolerance=Decimal("0.2")):
+    return all(abs(a - e) <= tolerance for a, e in zip(actual, expected))
+
+
+def _nutrition_lines(text):
+    """Read conventional item/meal-total lines without making assumptions on other prose."""
+    items = []
+    totals = []
+    section_items = []
+    for line in (text or "").splitlines():
+        match = ITEM_RE.match(line)
+        if match:
+            values = tuple(_number(value) for value in match.groups())
+            if all(value is not None for value in values):
+                items.append(values)
+                section_items.append(values)
+            continue
+        match = MEAL_TOTAL_RE.match(line)
+        if match and section_items:
+            values = tuple(_number(value) for value in match.groups())
+            if all(value is not None for value in values):
+                totals.append((values, tuple(
+                    sum((item[index] for item in section_items), Decimal(0))
+                    for index in range(4)
+                )))
+            section_items = []
+    return items, totals
+
+
+def _validation_error(text):
+    items, totals = _nutrition_lines(text)
+    for kcal, protein, fat, carbs in items:
+        macro_kcal = protein * 4 + fat * 9 + carbs * 4
+        # Labels and food databases can differ slightly due to fiber and rounding;
+        # reject only material contradictions, not ordinary label variation.
+        tolerance = max(Decimal("15"), kcal * Decimal("0.15"), macro_kcal * Decimal("0.15"))
+        if abs(kcal - macro_kcal) > tolerance:
+            return "Калории позиции не согласуются с указанными БЖУ."
+    if totals and any(not _matches(reported, summed) for reported, summed in totals):
+        return "Итог приёма пищи не равен сумме указанных позиций."
+    return None
+
+
+def validated_plan_reply(text, snapshot, response):
+    """Replace a numerically inconsistent plan with verified diary facts and budget."""
+    if not PLAN_REQUEST.search(text or ""):
+        return response
+    problem = _validation_error(response)
+    if not problem:
+        return response
+    eaten = snapshot.get("computed_eaten") or {}
+    state = snapshot.get("state") or {}
+    fields = state.get("fields", state) if isinstance(state, dict) else {}
+    actual = _number(eaten.get("kcal"))
+    goal = _number(fields.get("CaloriesGoal")) or STATE_GOALS["kcal"][1]
+    if actual is None:
+        return ("Не стал отправлять меню: в расчёте не сошлись калории и БЖУ. "
+                "Проверьте подтверждённый итог командой /day, затем запросите план ещё раз.")
+    remaining = goal - actual
+    budget = (f"до цели осталось {_fmt(remaining)} ккал"
+              if remaining >= 0 else f"цель превышена на {_fmt(-remaining)} ккал")
+    return (f"Не стал отправлять меню: {problem} Проверенный факт за {snapshot.get('day', 'сегодня')} — "
+            f"{_fmt(actual)} ккал; {budget}. Уже съеденное повторно не учитываю.")
