@@ -111,6 +111,8 @@ def _intake_reply(result, items, status):
 def answer(text, remote_factory=lambda:AirtableJournal(Client()), database=None,
            event_id='manual-event', owner_key=None, attachment_ids=None):
     database=database or os.environ.get('CHANNEL_DB','channels.sqlite3')
+    from .telegram_menu import normalize, MENU_TEXT
+    text=normalize(text)
     command, _, payload=text.strip().partition(' ')
     command=command.lower()
     pending=_pending(database,owner_key)
@@ -121,8 +123,16 @@ def answer(text, remote_factory=lambda:AirtableJournal(Client()), database=None,
     if pending and _negative(text):
         _clear_pending(database,owner_key)
         return 'Понял, ничего не записывал.'
-    if command in ('/start','/help','помощь'):
-        return 'Консультант по питанию: /day — дневник; /sync — общий дневник и остатки; /calc JSON — расчёт. Можно задавать вопросы обычным текстом. Напишите, что съели, или пришлите фото и подтвердите запись словом «Съел».'
+    if command in ('/start','/menu','/help','помощь','меню'):
+        return MENU_TEXT
+    if command == '/food':
+        return ('🍽 Запись еды\n\nНапишите, что уже съели или выпили, и укажите количество. '
+                'Например: «Съел творог 0% 180 г». Для масла, соусов и напитков тоже укажите количество. '
+                'Желаемую еду и предложения меню бот не считает съеденными.')
+    if command == '/photo':
+        return ('📸 Расчёт по фото\n\nПришлите фотографию еды с весом порции и составом, если он известен. '
+                'Для упаковки сфотографируйте этикетку КБЖУ. Если это только оценка, бот запросит '
+                'подтверждение перед записью. Если уже съели, укажите это в подписи.')
     if command in ('/day','/sync','сегодня'):
         data=remote_factory().read(today())
         state=data['state']['fields'] if data['state'] else {}
@@ -217,7 +227,8 @@ def send(platform,peer,text,event_id):
     if platform=='telegram':
         token=os.environ['TELEGRAM_BOT_TOKEN']
         url='https://api.telegram.org/bot'+token+'/sendMessage'
-        body=json.dumps({'chat_id':peer,'text':text}).encode()
+        from .telegram_menu import keyboard
+        body=json.dumps({'chat_id':peer,'text':text,'reply_markup':keyboard()},ensure_ascii=False).encode()
         headers={'Content-Type':'application/json'}
     else:
         url='https://api.vk.com/method/messages.send'
@@ -377,6 +388,10 @@ def main():
     with sqlite3.connect(database) as db:
         db.execute('CREATE TABLE IF NOT EXISTS delivered(event TEXT PRIMARY KEY)')
     server=ThreadingHTTPServer((os.environ.get('API_HOST','127.0.0.1'),int(os.environ.get('PORT','8081'))),handler(database))
+    if os.environ.get('TELEGRAM_BOT_TOKEN'):
+        from .telegram_menu import configure
+        menu_ready=configure(os.environ['TELEGRAM_BOT_TOKEN'],os.environ.get('TELEGRAM_OWNER_ID',''))
+        print('Telegram menu configured' if menu_ready else 'Telegram menu setup deferred; reply buttons remain available',flush=True)
     print('Nutrition channels ready',flush=True)
     server.serve_forever()
 
