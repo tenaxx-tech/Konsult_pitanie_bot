@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from nutrition import gigachat_chat, gemini_chat, groq_chat
 from nutrition.planning import (
+    plan_repair_request,
     request_context,
     request_instructions,
     validated_plan_reply,
@@ -92,6 +93,41 @@ class PlanningContextTests(unittest.TestCase):
         self.assertIn("1373.4 ккал", safe)
         self.assertIn("583.6 ккал", safe)
         self.assertNotIn("1600.4", safe)
+
+    def test_invalid_plan_builds_one_correction_prompt_with_error(self):
+        bad = "Завтрак:\n- Творог — 360 ккал, Б36, Ж1, У6.6\nВсего: 360 ккал, Б36, Ж1, У6.6"
+        original_messages = [{"role": "user", "content": "Составь план питания"}]
+        retry = plan_repair_request("policy", "Составь план питания", snapshot(), original_messages, bad)
+        self.assertIsNotNone(retry)
+        self.assertEqual(retry["max_output_tokens"], 1800)
+        self.assertIn("пересчитай", retry["input"][-1]["content"].lower())
+        self.assertIn("бжу", retry["input"][-1]["content"].lower())
+        self.assertEqual(retry["input"][-2]["content"], bad)
+        self.assertIsNone(plan_repair_request("policy", "Привет", snapshot(), original_messages, bad))
+
+    def test_providers_retry_invalid_plan_once_and_keep_corrected_reply(self):
+        bad = "Завтрак:\n- Творог — 360 ккал, Б36, Ж1, У6.6\nВсего: 360 ккал, Б36, Ж1, У6.6"
+        corrected = "Завтрак:\n- Творог — 180.4 ккал, Б36, Ж1, У6.6\nВсего: 180.4 ккал, Б36, Ж1, У6.6"
+        for provider in (gigachat_chat, gemini_chat, groq_chat):
+            with self.subTest(provider=provider.__name__), tempfile.NamedTemporaryFile() as db:
+                calls = []
+                with patch.object(provider, "request", side_effect=lambda body: calls.append(body) or (bad if len(calls) == 1 else corrected)):
+                    result = provider.answer("Составь план питания на остаток дня", snapshot(), db.name)
+                self.assertEqual(len(calls), 2)
+                self.assertEqual(result, corrected)
+                self.assertIn("пересчитай", calls[1]["input"][-1]["content"].lower())
+
+    def test_second_invalid_plan_still_falls_back_safely(self):
+        bad = "Завтрак:\n- Творог — 360 ккал, Б36, Ж1, У6.6\nВсего: 360 ккал, Б36, Ж1, У6.6"
+        for provider in (gigachat_chat, gemini_chat, groq_chat):
+            with self.subTest(provider=provider.__name__), tempfile.NamedTemporaryFile() as db:
+                calls = []
+                with patch.object(provider, "request", side_effect=lambda body: calls.append(body) or bad):
+                    result = provider.answer("Составь план питания на остаток дня", snapshot(), db.name)
+                self.assertEqual(len(calls), 2)
+                self.assertIn("не согласуются", result)
+                self.assertIn("583.6 ккал", result)
+                self.assertNotIn("360 ккал", result)
 
     def test_consistent_plan_remains_unchanged(self):
         response = "Завтрак:\n- Каша — 100 ккал, Б10, Ж2, У10\nВсего: 100 ккал, Б10, Ж2, У10"
