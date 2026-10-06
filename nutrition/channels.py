@@ -16,6 +16,10 @@ from .api import calculate
 from .airtable import AirtableJournal, Client, SyncError
 
 LOCK=Lock()
+CALC_USAGE=('Для расчёта укажите порции в JSON. Пример:\n'
+            '/calc {"portions":[{"name":"Продукт","grams":100,'
+            '"per100":{"kcal":120,"protein":10,"fat":5,"carbs":8},'
+            '"source":"этикетка"}]}\nДневник при расчёте не изменяется.')
 
 
 def today():
@@ -132,7 +136,15 @@ def answer(text, remote_factory=lambda:AirtableJournal(Client()), database=None,
         return (f"Дата: {data['day']}\nФакт: {values['kcal']} ккал · Б {values['protein']} · Ж {values['fat']} · У {values['carbs']} г\n"
                 f"Позиций: {len(data['meals'])}. Версия: {state.get('Version',0)}.")
     if command=='/calc':
-        result=calculate(json.loads(payload)['portions'])
+        if not payload:
+            return CALC_USAGE
+        try:
+            data=json.loads(payload)
+            if not isinstance(data,dict):
+                return CALC_USAGE
+            result=calculate(data.get('portions'))
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            return 'Не удалось прочитать данные для расчёта.\n'+CALC_USAGE
         n=result['total']
         return f"{'≈ ' if result['estimated'] else ''}{n['kcal']} ккал · Б {n['protein']} · Ж {n['fat']} · У {n['carbs']} г"
     if _intake_candidate(text, bool(attachment_ids)) and not os.environ.get('GIGACHAT_AUTHORIZATION_KEY'):
