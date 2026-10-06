@@ -67,3 +67,25 @@ class DialogueConfigurationTests(unittest.TestCase):
             result = answer('Подскажи меню', remote_factory=lambda: self.fail('Airtable should not be read'))
         self.assertIn('GROQ_API_KEY', result)
         self.assertIn('/day', result)
+
+
+    def test_empty_calc_returns_usage_without_reading_airtable(self):
+        from nutrition.channels import answer
+        result = answer('/calc', remote_factory=lambda: self.fail('Airtable should not be read'))
+        self.assertIn('Для расчёта укажите порции в JSON', result)
+        self.assertIn('/calc {"portions"', result)
+        self.assertIn('Дневник при расчёте не изменяется', result)
+
+    def test_calc_with_invalid_json_returns_usage_without_reading_airtable(self):
+        from nutrition.channels import answer
+        result = answer('/calc {not json}', remote_factory=lambda: self.fail('Airtable should not be read'))
+        self.assertIn('Не удалось прочитать данные', result)
+        self.assertIn('/calc {"portions"', result)
+
+    def test_calc_with_portion_json_returns_total_without_reading_airtable(self):
+        from nutrition.channels import answer
+        payload = ('/calc {"portions":[{"name":"Продукт","grams":100,'
+                   '"per100":{"kcal":120,"protein":10,"fat":5,"carbs":8},'
+                   '"source":"этикетка"}]}')
+        result = answer(payload, remote_factory=lambda: self.fail('Airtable should not be read'))
+        self.assertEqual(result, '120.0 ккал · Б 10.0 · Ж 5.0 · У 8.0 г')
