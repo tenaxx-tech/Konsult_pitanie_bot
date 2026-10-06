@@ -3,7 +3,12 @@ import unittest
 from unittest.mock import patch
 
 from nutrition import gigachat_chat, gemini_chat, groq_chat
-from nutrition.planning import request_context, request_instructions, verified_day_facts
+from nutrition.planning import (
+    request_context,
+    request_instructions,
+    validated_plan_reply,
+    verified_day_facts,
+)
 
 
 def snapshot():
@@ -64,6 +69,35 @@ class PlanningContextTests(unittest.TestCase):
         context = request_context("Составь рацион", data)
         self.assertIn("историю диалога и старые предложения не считай фактом", instructions)
         self.assertIn("VERIFIED DAY FACTS", context)
+
+    def test_inconsistent_plan_is_replaced_with_verified_budget(self):
+        bad_answer = """Завтрак:
+- Яйца куриные (3 шт.) — 216 ккал, Б18.9, Ж14.4, У1.2
+- Творог обезжиренный (200 г) — 360 ккал, Б36, Ж1, У6.6
+- Помидоры (94 г) — 29 ккал, Б0.8, Ж0.2, У3.7
+- Огурцы (51 г) — 15 ккал, Б0.4, Ж0.1, У1.5
+- Латте (300 мл) — 179.4 ккал, Б9, Ж9, У18
+- Чебурек с мясом (85 г) — 299 ккал, Б9, Ж15, У32
+Всего: 1204.4 ккал, Б74.3, Ж39.6, У51.4
+- Картошка с курицей и сыром (216 г): ~216 ккал, Б13.6, Ж11.4, У36.9
+- Зимний салат (100 г): ~180 ккал, Б5, Ж12.9, У8.8
+Всего: 396 ккал, Б18.6, Ж24.3, У45.7
+Итог дня: 1600.4 ккал"""
+        safe = validated_plan_reply(
+            "Напиши план питания на день с учётом съеденных килокалорий",
+            snapshot(),
+            bad_answer,
+        )
+        self.assertIn("не согласуются", safe)
+        self.assertIn("1373.4 ккал", safe)
+        self.assertIn("583.6 ккал", safe)
+        self.assertNotIn("1600.4", safe)
+
+    def test_consistent_plan_remains_unchanged(self):
+        response = "Завтрак:\n- Каша — 100 ккал, Б10, Ж2, У10\nВсего: 100 ккал, Б10, Ж2, У10"
+        self.assertEqual(
+            validated_plan_reply("План на день", snapshot(), response), response
+        )
 
 
 if __name__ == "__main__":
