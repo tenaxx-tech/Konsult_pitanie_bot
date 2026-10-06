@@ -122,8 +122,8 @@ def answer(text, remote_factory=lambda:AirtableJournal(Client()), database=None,
         _clear_pending(database,owner_key)
         return 'Понял, ничего не записывал.'
     if command in ('/start','/help','помощь'):
-        return 'Консультант по питанию: /day — дневник; /calc JSON — расчёт. Можно задавать вопросы обычным текстом. Напишите, что съели, или пришлите фото и подтвердите запись словом «Съел».'
-    if command in ('/day','сегодня'):
+        return 'Консультант по питанию: /day — дневник; /sync — общий дневник и остатки; /calc JSON — расчёт. Можно задавать вопросы обычным текстом. Напишите, что съели, или пришлите фото и подтвердите запись словом «Съел».'
+    if command in ('/day','/sync','сегодня'):
         data=remote_factory().read(today())
         state=data['state']['fields'] if data['state'] else {}
         status=state.get('Status')
@@ -133,8 +133,30 @@ def answer(text, remote_factory=lambda:AirtableJournal(Client()), database=None,
             values={k:str(state.get(n,'нет данных')) for k,n in zip(('kcal','protein','fat','carbs'),('EatenKcal','EatenProtein','EatenFat','EatenCarbs'))}
         else:
             values=data['computed_eaten']
-        return (f"Дата: {data['day']}\nФакт: {values['kcal']} ккал · Б {values['protein']} · Ж {values['fat']} · У {values['carbs']} г\n"
-                f"Позиций: {len(data['meals'])}. Версия: {state.get('Version',0)}.")
+        reply = (f"Дата: {data['day']}\nФакт: {values['kcal']} ккал · Б {values['protein']} · Ж {values['fat']} · У {values['carbs']} г\n"
+                 f"Позиций: {len(data['meals'])}. Версия: {state.get('Version',0)}.")
+        if command == '/sync':
+            from .core import Goals, Nutrients
+            defaults = Goals()
+            goal_fields = {'kcal':'CaloriesGoal','protein_min':'ProteinMin','protein_max':'ProteinMax',
+                           'fat_min':'FatMin','fat_max':'FatMax','carbs':'CarbMax'}
+            goals = Goals(**{key: state.get(field, getattr(defaults,key)) for key,field in goal_fields.items()})
+            try:
+                remaining = goals.remaining(Nutrients(**values))
+            except (ValueError, TypeError, InvalidOperation):
+                return reply + '\nОстаток недоступен: в сохранённом итоге не хватает числовых данных.'
+            confirmed = sum(1 for row in data['meals'] if (
+                row.get('fields',{}).get('Status',{}).get('name') if isinstance(row.get('fields',{}).get('Status'),dict)
+                else row.get('fields',{}).get('Status')) == 'CONFIRMED')
+            if status == 'CLOSED':
+                return reply + '\nДень закрыт; показан сохранённый итог, новых записей не делал.'
+            return (reply + f"\nПодтверждено позиций: {confirmed}. Общий дневник Airtable перечитан."
+                    + f"\nОстаток калорий: {Decimal(remaining['kcal']):.1f} ккал."
+                    + f"\nБелок до диапазона: {Decimal(remaining['protein'][0]):.1f}–{Decimal(remaining['protein'][1]):.1f} г."
+                    + f"\nЖиры до диапазона: {Decimal(remaining['fat'][0]):.1f}–{Decimal(remaining['fat'][1]):.1f} г."
+                    + f"\nУглеводы до лимита: {Decimal(remaining['carbs']):.1f} г."
+                    + "\nОтрицательное значение означает превышение. Записей не менял.")
+        return reply
     if command=='/calc':
         if not payload:
             return CALC_USAGE
