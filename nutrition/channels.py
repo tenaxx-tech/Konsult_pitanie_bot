@@ -41,13 +41,16 @@ def answer(text, remote_factory=lambda:AirtableJournal(Client())):
         result=calculate(json.loads(payload)['portions'])
         n=result['total']
         return f"{'≈ ' if result['estimated'] else ''}{n['kcal']} ккал · Б {n['protein']} · Ж {n['fat']} · У {n['carbs']} г"
+    if os.environ.get('GIGACHAT_AUTHORIZATION_KEY'):
+        from .gigachat_chat import answer as chat
+        return chat(text, remote_factory().read(today()), os.environ.get('CHANNEL_DB','channels.sqlite3'))
     if os.environ.get('GEMINI_API_KEY'):
         from .gemini_chat import answer as chat
         return chat(text, remote_factory().read(today()), os.environ.get('CHANNEL_DB','channels.sqlite3'))
     if os.environ.get('GROQ_API_KEY'):
         from .groq_chat import answer as chat
         return chat(text, remote_factory().read(today()), os.environ.get('CHANNEL_DB','channels.sqlite3'))
-    return 'ИИ пока не настроен: добавьте GEMINI_API_KEY (Gemini) или GROQ_API_KEY (Groq) в секреты сервера. /day и /calc доступны.'
+    return 'ИИ пока не настроен: добавьте GIGACHAT_AUTHORIZATION_KEY (GigaChat), GEMINI_API_KEY (Gemini) или GROQ_API_KEY (Groq) в секреты сервера. /day и /calc доступны.'
 
 
 def send(platform,peer,text,event_id):
