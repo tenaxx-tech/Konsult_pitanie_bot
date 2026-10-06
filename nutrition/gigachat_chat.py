@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from .airtable import SyncError
-from .planning import request_context, request_instructions, validated_plan_reply
+from .planning import plan_repair_request, request_context, request_instructions, validated_plan_reply
 
 POLICY = '''Ты персональный консультант по питанию. Отвечай по-русски, спокойно и кратко.
 Цель пользователя — 82 кг с сохранением мышц. Цели: <=1957 ккал, Б150–160, Ж70–80, У<=170 г.
@@ -282,6 +282,13 @@ def answer(text, snapshot, database):
     try:
         result = request({'instructions': request_instructions(POLICY, text, context),
                           'input': messages, 'max_output_tokens': 1800})
+        repair = plan_repair_request(POLICY, text, context, messages, result)
+        if repair:
+            try:
+                result = request(repair)
+            except SyncError:
+                # Never return the rejected draft if the single correction call fails.
+                pass
     except SyncError as exc:
         if 'quota or rate limit exceeded' in str(exc):
             return 'GigaChat временно отклонил запрос по квоте или частоте обращений. Попробуйте позже; /day и /calc доступны.'
