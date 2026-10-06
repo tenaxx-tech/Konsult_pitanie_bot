@@ -129,6 +129,23 @@ class PlanningContextTests(unittest.TestCase):
                 self.assertIn("583.6 ккал", result)
                 self.assertNotIn("360 ккал", result)
 
+    def test_diary_mismatch_refusal_triggers_bounded_retry(self):
+        refusal = ("Не смог сформировать согласованное меню, потому что данные по калорийности "
+                   "и БЖУ не соответствуют друг другу. Нужны точные данные подтвержденного рациона.")
+        good = "Ужин:\n- Каша — 100 ккал, Б10, Ж2, У10\nВсего: 100 ккал, Б10, Ж2, У10"
+        for provider in (gigachat_chat, gemini_chat, groq_chat):
+            with self.subTest(provider=provider.__name__), tempfile.NamedTemporaryFile() as db:
+                with patch.object(provider, "request", side_effect=[refusal, good]) as request:
+                    result = provider.answer("Составь план питания на остаток дня", snapshot(), db.name)
+                self.assertEqual(request.call_count, 2)
+                self.assertEqual(result, good)
+        repair = plan_repair_request("policy", "Составь меню", snapshot(), [], refusal)
+        self.assertIn("не блокирует", repair["instructions"])
+        fallback = validated_plan_reply("Составь меню", snapshot(), refusal)
+        self.assertIn("583.6 ккал", fallback)
+        self.assertIn("Этикетки всего уже съеденного не требуются", fallback)
+        self.assertEqual(validated_plan_reply("Привет", snapshot(), refusal), refusal)
+
     def test_consistent_plan_remains_unchanged(self):
         response = "Завтрак:\n- Каша — 100 ккал, Б10, Ж2, У10\nВсего: 100 ккал, Б10, Ж2, У10"
         self.assertEqual(
