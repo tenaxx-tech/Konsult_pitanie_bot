@@ -5,6 +5,7 @@ import sqlite3
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from .airtable import SyncError
+from .planning import request_context, request_instructions
 
 POLICY = '''Ты персональный консультант по питанию. Отвечай по-русски, спокойно и кратко.
 Цель пользователя — 82 кг с сохранением мышц. Цели: <=1957 ккал, Б150–160, Ж70–80, У<=170 г.
@@ -88,11 +89,12 @@ def answer(text, snapshot, database):
     context = {k: snapshot[k] for k in (
         'day', 'state', 'meals', 'computed_eaten', 'computed_forecast', 'protocols'
     )}
-    messages = [{'role': 'user', 'content': 'Текущий контекст Airtable:\n' + json.dumps(context, ensure_ascii=False)}]
+    messages = [{'role': 'user', 'content': request_context(text, context)}]
     messages += [{'role': role, 'content': content} for role, content in rows]
     messages.append({'role': 'user', 'content': text[:12000]})
     try:
-        result = request({'instructions': POLICY, 'input': messages, 'max_output_tokens': 1800})
+        result = request({'instructions': request_instructions(POLICY, text, context),
+                          'input': messages, 'max_output_tokens': 1800})
     except SyncError as exc:
         error = str(exc)
         if 'free-tier rate limit exceeded' in error:
