@@ -1,0 +1,29 @@
+name: Python tests
+
+on:
+  push:
+    branches: [main, fix/sync-audit-20261010]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run unit tests (no production secrets)
+        env:
+          AIRTABLE_TOKEN: ''
+          AIRTABLE_BASE_ID: ''
+          GIGACHAT_AUTHORIZATION_KEY: ''
+          GEMINI_API_KEY: ''
+          GROQ_API_KEY: ''
+        run: python -m unittest discover -s tests -v
