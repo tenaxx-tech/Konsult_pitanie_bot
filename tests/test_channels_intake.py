@@ -42,6 +42,28 @@ class IntakeTests(unittest.TestCase):
         self.assertEqual(rows[0]['fields']['Source'], 'ESTIMATE')
         self.assertIn('оценка', reply)
 
+    def test_partial_write_retry_keeps_original_model_interpretation(self):
+        from nutrition.airtable import SyncError
+        from unittest.mock import Mock
+        data={'action':'record','reply':'Оценка','day':'2026-10-02',
+              'meal':'LUNCH','items':ITEMS}
+        original=self.remote.upsert
+        attempts=[]
+        def interrupted(*args,**kwargs):
+            result=original(*args,**kwargs)
+            attempts.append(1)
+            if len(attempts)==1:
+                raise SyncError('connection lost after save')
+            return result
+        with patch.dict(os.environ,{'GIGACHAT_AUTHORIZATION_KEY':'configured'}), \
+             patch('nutrition.gigachat_chat.extract_intake',return_value=data) as extract, \
+             patch.object(self.remote,'upsert',side_effect=interrupted):
+            with self.assertRaises(SyncError):
+                answer('Съел кашу',self.remote_factory,self.database,'telegram:retry','telegram:42')
+            answer('Съел кашу',self.remote_factory,self.database,'telegram:retry','telegram:42')
+        extract.assert_called_once()
+        self.assertEqual(len(self.remote.read('2026-10-02')['meals']),1)
+
     def test_photo_proposal_is_only_written_after_confirmation_once(self):
         result = {'action':'proposal','reply':'Похоже на яблоко','day':'2026-10-02',
                   'meal':'SNACK','items':ITEMS}

@@ -67,6 +67,20 @@ def _clear_pending(database, owner_key):
         db.execute('DELETE FROM pending_meals WHERE owner_key=?',(owner_key,))
 
 
+def _event_data(database, event_id, kind, value=None):
+    """Persist interpretation before writes and replies before channel delivery."""
+    if event_id == 'manual-event':
+        return value
+    with sqlite3.connect(database) as db:
+        db.execute('CREATE TABLE IF NOT EXISTS event_data(event TEXT, kind TEXT, value TEXT NOT NULL, PRIMARY KEY(event,kind))')
+        if value is not None:
+            db.execute('INSERT OR IGNORE INTO event_data VALUES (?,?,?)',
+                       (event_id,kind,json.dumps(value,ensure_ascii=False)))
+        row=db.execute('SELECT value FROM event_data WHERE event=? AND kind=?',
+                       (event_id,kind)).fetchone()
+    return json.loads(row[0]) if row else None
+
+
 def _record_items(remote, day, meal, items, event_id, status):
     from .core import Nutrients, Portion
     from .airtable import select
@@ -187,7 +201,10 @@ def answer(text, remote_factory=lambda:AirtableJournal(Client()), database=None,
         if _intake_candidate(text, bool(attachment_ids)):
             from .gigachat_chat import extract_intake
             snapshot=remote_factory().read(today())
-            data=extract_intake(text,snapshot['day'],snapshot.get('protocols'),attachment_ids)
+            data=_event_data(database,event_id,'intake')
+            if data is None:
+                data=extract_intake(text,snapshot['day'],snapshot.get('protocols'),attachment_ids)
+                data=_event_data(database,event_id,'intake',data)
             for item in data.get('items',[]):
                 item['estimated']=True
             day=data['day'] or snapshot['day']
@@ -340,6 +357,11 @@ def handler(database, responder=None, sender=send):
                 with LOCK, sqlite3.connect(database) as db:
                     if db.execute('SELECT 1 FROM delivered WHERE event=?',(event,)).fetchone():
                         self.reply(200,'ok');return
+                    cached_reply=_event_data(database,event,'reply')
+                    if cached_reply is not None:
+                        sender(platform,peer,cached_reply,event)
+                        db.execute('INSERT INTO delivered VALUES (?)',(event,))
+                        self.reply(200,'ok');return
                     try:
                         if has_photo and not os.environ.get('GIGACHAT_AUTHORIZATION_KEY'):
                             text='Для разбора фото нужен настроенный GigaChat. Фото не отправлено и в дневник ничего не записано.'
@@ -362,6 +384,7 @@ def handler(database, responder=None, sender=send):
                         text='Не удалось завершить запрос: '+str(exc)+'. Дневник не считаю обновлённым; проверьте /day перед повтором.'
                     except Exception:
                         text='Не удалось обработать сообщение. Проверьте /day перед повторной отправкой, чтобы не создать дубль.'
+                    _event_data(database,event,'reply',text)
                     sender(platform,peer,text,event)
                     db.execute('INSERT INTO delivered VALUES (?)',(event,))
                 self.reply(200,'ok')
