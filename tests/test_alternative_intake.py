@@ -39,7 +39,7 @@ class AlternativeIntakeTests(unittest.TestCase):
         with patch.dict(os.environ, {'GIGACHAT_AUTHORIZATION_KEY': '', 'GEMINI_API_KEY': '',
                                      'GROQ_API_KEY': 'configured'}), \
              patch('nutrition.groq_chat.request', return_value=json.dumps(proposal, ensure_ascii=False)):
-            response = answer('Оцени кашу 200 г', lambda: self.remote, self.db,
+            response = answer('Запланируй кашу 200 г', lambda: self.remote, self.db,
                               'telegram:proposal-1', 'telegram:42')
             self.assertIn('Пока не записывал', response)
             self.assertEqual(self.remote.read('2026-10-02')['meals'], [])
