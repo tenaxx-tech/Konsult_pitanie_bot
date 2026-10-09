@@ -206,7 +206,7 @@ def answer(text, remote_factory=lambda:AirtableJournal(Client()), database=None,
             data=extract_alternative(text,snapshot['day'],snapshot.get('protocols'))
             data=_event_data(database,event_id,'intake',data)
         day=data.get('day') or snapshot['day']
-        if not isinstance(day,str) or not re.fullmatch(r'\\d{4}-\\d{2}-\\d{2}',day):
+        if not isinstance(day,str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}',day):
             raise SyncError('AI returned invalid meal date')
         date.fromisoformat(day)
         if data['action']=='clarify' or not data['items']:
@@ -214,14 +214,14 @@ def answer(text, remote_factory=lambda:AirtableJournal(Client()), database=None,
         if _explicit_consumption(text) and data['action']=='record':
             result=_record_items(remote_factory(),day,data['meal'],data['items'],event_id,'CONFIRMED')
             return _intake_reply(result,data['items'],'CONFIRMED')
-        if data['action']=='plan' and re.search(r'\\b(план|запланир|в\\s+план)\\w*',text.casefold()):
+        if data['action']=='plan' and re.search(r'\b(план|запланир|в\s+план)\w*',text.casefold()):
             result=_record_items(remote_factory(),day,data['meal'],data['items'],event_id,'PLANNED')
             if owner_key:
                 _set_pending(database,owner_key,day,data['meal'],data['items'],event_id)
-            return _intake_reply(result,data['items'],'PLANNED')+'\\nЧтобы подтвердить план, ответьте «Съел».'
+            return _intake_reply(result,data['items'],'PLANNED')+'\nЧтобы подтвердить план, ответьте «Съел».'
         if owner_key:
             _set_pending(database,owner_key,day,data['meal'],data['items'],event_id)
-        return (data.get('reply') or 'Подготовил оценку.')+'\\nПока не записывал. Ответьте «Съел» для подтверждения.'
+        return (data.get('reply') or 'Подготовил оценку.')+'\nПока не записывал. Ответьте «Съел» для подтверждения.'
     if os.environ.get('GIGACHAT_AUTHORIZATION_KEY'):
         from .gigachat_chat import answer as chat
         is_explicit=_explicit_consumption(text)
