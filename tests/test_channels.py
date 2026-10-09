@@ -49,6 +49,19 @@ class Tests(unittest.TestCase):
         self.call('/telegram/webhook',self.event());self.call('/telegram/webhook',self.event())
         self.assertEqual(len(self.sent),1)
 
+    def test_failed_send_reuses_durable_reply_after_retry(self):
+        from unittest.mock import Mock
+        responder=Mock(return_value='Записал еду')
+        sender=Mock(side_effect=[RuntimeError('offline'), None])
+        self.server.RequestHandlerClass=handler(self.db,responder,sender)
+        self.assertEqual(self.call('/telegram/webhook',self.event())[0],503)
+        # A fresh handler models a process restart with the same persistent disk.
+        self.server.RequestHandlerClass=handler(self.db,responder,sender)
+        self.assertEqual(self.call('/telegram/webhook',self.event())[0],200)
+        responder.assert_called_once()
+        self.assertEqual(sender.call_count,2)
+        self.assertEqual(sender.call_args_list[0],sender.call_args_list[1])
+
     def test_vk_confirmation(self):
         self.assertEqual(self.call('/vk/webhook',dict(type='confirmation',group_id=10,secret='vksecret')),(200,'confirm'))
         self.assertEqual(self.sent,[])
