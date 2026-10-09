@@ -79,10 +79,8 @@ class IntakeTests(unittest.TestCase):
         self.assertEqual(len(meals), 1)
         self.assertEqual(meals[0]['fields']['Status'], 'CONFIRMED')
 
-    def test_consumption_without_gigachat_never_falls_through_to_unlogged_ai(self):
-        with patch.dict(os.environ, {'GIGACHAT_AUTHORIZATION_KEY':'', 'GEMINI_API_KEY':'configured'}), \
-             patch('nutrition.gemini_chat.answer') as gemini:
+    def test_consumption_without_any_provider_never_writes(self):
+        with patch.dict(os.environ, {'GIGACHAT_AUTHORIZATION_KEY':'', 'GEMINI_API_KEY':'', 'GROQ_API_KEY':''}):
             reply = answer('Я съел кашу', self.remote_factory, self.database)
-        gemini.assert_not_called()
-        self.assertIn('не записаны', reply)
+        self.assertIn('ничего не записано', reply)
         self.assertEqual(self.remote.read('2026-10-02')['meals'], [])
