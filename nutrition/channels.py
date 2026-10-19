@@ -119,12 +119,14 @@ def _intake_reply(result, items, status):
     version=fields.get('Version',0)
     return (f'{action}: {names}{estimate}. Итого: {total["kcal"]:.1f} ккал · '
             f'Б {total["protein"]:.1f} · Ж {total["fat"]:.1f} · У {total["carbs"]:.1f} г. '
-            f'Проверено чтением Airtable, версия {version}.')
+            f'{result.get("storage_notice", "Проверено чтением Airtable")}, версия {version}.')
 
 
-def answer(text, remote_factory=lambda:AirtableJournal(Client()), database=None,
+def answer(text, remote_factory=None, database=None,
            event_id='manual-event', owner_key=None, attachment_ids=None):
     database=database or os.environ.get('CHANNEL_DB','channels.sqlite3')
+    if remote_factory is None:
+        remote_factory = lambda: configured_journal(database)
     from .telegram_menu import normalize, MENU_TEXT
     text=normalize(text)
     command, _, payload=text.strip().partition(' ')
@@ -160,6 +162,8 @@ def answer(text, remote_factory=lambda:AirtableJournal(Client()), database=None,
         reply = (f"Дата: {data['day']}\nФакт: {values['kcal']} ккал · Б {values['protein']} · Ж {values['fat']} · У {values['carbs']} г\n"
                  f"Позиций: {len(data['meals'])}. Версия: {state.get('Version',0)}.")
         if command == '/sync':
+            if 'google_sync' in data:
+                reply += '\nGoogle: '+data['google_sync']+' (фоновая выгрузка; изменения других приложений не загружаются).'
             from .core import Goals, Nutrients
             defaults = Goals()
             goal_fields = {'kcal':'CaloriesGoal','protein_min':'ProteinMin','protein_max':'ProteinMax',
@@ -174,7 +178,7 @@ def answer(text, remote_factory=lambda:AirtableJournal(Client()), database=None,
                 else row.get('fields',{}).get('Status')) == 'CONFIRMED')
             if status == 'CLOSED':
                 return reply + '\nДень закрыт; показан сохранённый итог, новых записей не делал.'
-            return (reply + f"\nПодтверждено позиций: {confirmed}. Общий дневник Airtable перечитан."
+            return (reply + f"\nПодтверждено позиций: {confirmed}. Дневник перечитан из настроенного хранилища."
                     + f"\nОстаток калорий: {Decimal(remaining['kcal']):.1f} ккал."
                     + f"\nБелок до диапазона: {Decimal(remaining['protein'][0]):.1f}–{Decimal(remaining['protein'][1]):.1f} г."
                     + f"\nЖиры до диапазона: {Decimal(remaining['fat'][0]):.1f}–{Decimal(remaining['fat'][1]):.1f} г."
@@ -194,7 +198,7 @@ def answer(text, remote_factory=lambda:AirtableJournal(Client()), database=None,
         n=result['total']
         return f"{'≈ ' if result['estimated'] else ''}{n['kcal']} ккал · Б {n['protein']} · Ж {n['fat']} · У {n['carbs']} г"
     if _intake_candidate(text, bool(attachment_ids)) and not os.environ.get('GIGACHAT_AUTHORIZATION_KEY'):
-        return 'Для автоматического разбора и записи еды нужен подключённый GigaChat. Сейчас данные в Airtable не записаны; проверьте секрет GIGACHAT_AUTHORIZATION_KEY на BotHost.'
+        return 'Для автоматического разбора и записи еды нужен подключённый GigaChat. Сейчас данные не записаны; проверьте секрет GIGACHAT_AUTHORIZATION_KEY на BotHost.'
     if os.environ.get('GIGACHAT_AUTHORIZATION_KEY'):
         from .gigachat_chat import answer as chat
         is_explicit=_explicit_consumption(text)
@@ -395,6 +399,16 @@ def handler(database, responder=None, sender=send):
     return Handler
 
 
+def configured_journal(database):
+    storage = os.environ.get('NUTRITION_STORAGE', 'google')
+    if storage == 'google':
+        from .google_storage import LocalGoogleJournal
+        return LocalGoogleJournal(database)
+    if storage == 'airtable':
+        return AirtableJournal(Client())  # explicit legacy mode for rollback only
+    raise SyncError('Unknown NUTRITION_STORAGE; no automatic fallback')
+
+
 def main():
     enabled=False
     for prefix,required in [('TELEGRAM',('BOT_TOKEN','WEBHOOK_SECRET','OWNER_ID')),
@@ -405,11 +419,16 @@ def main():
             enabled=True
     if not enabled:
         raise SystemExit('Configure Telegram or VK credentials in the environment')
-    Client()
     database=os.environ.get('CHANNEL_DB',os.path.join(os.environ.get('DATA_DIR','/app/data'),'channels.sqlite3'))
     os.makedirs(os.path.dirname(os.path.abspath(database)),exist_ok=True)
     with sqlite3.connect(database) as db:
         db.execute('CREATE TABLE IF NOT EXISTS delivered(event TEXT PRIMARY KEY)')
+    if os.environ.get('NUTRITION_STORAGE', 'google') == 'google' and os.environ.get('NUTRITION_PERSISTENT_STORAGE_CONFIRMED') != 'true':
+        raise SystemExit('Confirm a mounted persistent DATA_DIR before enabling Google storage')
+    journal = configured_journal(database)
+    if os.environ.get('NUTRITION_STORAGE', 'google') == 'google':
+        from .google_storage import GoogleMirror, start_exporter
+        start_exporter(journal, GoogleMirror())
     server=ThreadingHTTPServer((os.environ.get('API_HOST','127.0.0.1'),int(os.environ.get('PORT','8081'))),handler(database))
     if os.environ.get('TELEGRAM_BOT_TOKEN'):
         from .telegram_menu import configure
