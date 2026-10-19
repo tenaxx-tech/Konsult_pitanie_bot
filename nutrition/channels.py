@@ -145,26 +145,8 @@ def answer(text, remote_factory=None, database=None,
     if managed:
         from .accounts import Accounts, route, is_admin
         accounts=Accounts(database)
-        previous_user=accounts.get(owner_key)
         direct=route(accounts,owner_key,text)
         if direct is not None:
-            registered=accounts.get(owner_key)
-            if (previous_user and previous_user['stage']=='timezone' and registered and registered['stage']=='review'
-                    and os.environ.get('GIGACHAT_AUTHORIZATION_KEY')):
-                from .google_storage import LocalGoogleJournal
-                from .gigachat_chat import answer as first_plan
-                day=datetime.now(ZoneInfo(registered['profile']['timezone'])).date().isoformat()
-                snapshot=LocalGoogleJournal(database,owner_key).read(day)
-                local_time=datetime.now(ZoneInfo(registered['profile']['timezone'])).strftime('%H:%M')
-                try:
-                    menu=first_plan('Составь предварительный план питания с граммовками на остаток дня. '
-                                    'Местное время '+local_time+'. Учитывай предпочтения, исключения и аллергию из профиля. '
-                                    'Используй цели этого пользователя. Ответ до 1800 символов. '
-                                    'В новом дневнике нет сведений о съеденном. Это не означает, что человек не ел. '
-                                    'Покажи ознакомительный вариант и уточни, что уже было съедено; продукты не записывай.',snapshot,database)
-                    if len(direct)+len(menu)<3800:return direct+'\n\n'+menu
-                    return direct+'\n\nМеню подготовлено, но слишком длинное для одного сообщения. После /accept отправьте /plan для полного варианта.'
-                except SyncError:return direct+'\n\nМеню пока не удалось рассчитать. После /accept повторите /plan.'
             return direct
         user=accounts.get(owner_key)
         current_day=datetime.now(ZoneInfo(user['profile'].get('timezone','Asia/Yekaterinburg'))).date().isoformat()
@@ -189,6 +171,10 @@ def answer(text, remote_factory=None, database=None,
                 if command in ('/correct','/confirm','/cancel') and reply.startswith('Изменение сохранено'):
                     _clear_pending(database,owner_key)
                 return reply
+    if managed:
+        from .planning_setup import handle as setup_handle
+        setup_reply=setup_handle(accounts,owner_key,text,current_day,remote_factory,attachment_ids)
+        if setup_reply is not None:return setup_reply
     pending=_pending(database,owner_key)
     resume_intake=False
     if owner_key:

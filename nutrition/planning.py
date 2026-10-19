@@ -2,6 +2,8 @@
 from decimal import Decimal, InvalidOperation
 import json
 import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 
 PLAN_REQUEST = re.compile(r"\b(план\w*|меню|рацион)\b", re.IGNORECASE)
@@ -177,6 +179,14 @@ def request_instructions(base_policy, text, snapshot):
     )
     if PLAN_REQUEST.search(text or ""):
         sections.extend((PLANNING_RULES, verified_day_facts(snapshot)))
+        profile=snapshot.get('profile') or {}
+        local=datetime.now(ZoneInfo(profile.get('timezone','Asia/Yekaterinburg')))
+        sections.append('Местные дата и время пользователя: '+local.strftime('%Y-%m-%d %H:%M')+
+                        '. Планируй только оставшееся время дня; вечером не предлагай прошедшие завтрак и обед. '
+                        'Сначала используй имеющиеся продукты из pantry в профиле, учитывай предпочтения и исключения. '
+                        'Факт из дневника уже включён в суточный итог, не прибавляй его повторно. '
+                        'Для каждой новой порции укажи продукт, массу, сырой/готовый вес и КБЖУ; затем сложи строки. '
+                        'Запасы продуктов не являются съеденными порциями.')
     return "\n\n".join(sections)
 
 
