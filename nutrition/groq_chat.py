@@ -8,7 +8,7 @@ from .airtable import SyncError
 from .planning import plan_repair_request, request_context, request_instructions, validated_plan_reply
 
 POLICY = '''Ты персональный консультант по питанию. Отвечай по-русски, спокойно и кратко.
-Цель пользователя — 82 кг с сохранением мышц. Цели: <=1957 ккал, Б150–160, Ж70–80, У<=170 г.
+Личные цели, предпочтения и ограничения бери только из профиля и полей state контекста текущего пользователя. Не используй цели другого человека.
 Обычные практичные порции, недорогие продукты, без голодания и компенсации.
 Не ставь диагнозы и не назначай лечение. Не выдавай приблизительные КБЖУ за точные.
 Правила Config из контекста определяют расчёт и планирование.
@@ -80,15 +80,13 @@ def probe():
 
 def answer(text, snapshot, database):
     day = snapshot['day']
-    with sqlite3.connect(database) as db:
-        db.execute('CREATE TABLE IF NOT EXISTS conversation (id INTEGER PRIMARY KEY, day TEXT, role TEXT, content TEXT)')
-        rows = db.execute(
-            'SELECT role,content FROM conversation WHERE day=? ORDER BY id DESC LIMIT 12',
-            (day,),
-        ).fetchall()[::-1]
+    from .conversations import load, save
+    account=snapshot.get('account','telegram:'+os.environ.get('TELEGRAM_OWNER_ID',''))
+    rows=load(database,day,account)
     context = {k: snapshot[k] for k in (
         'day', 'state', 'meals', 'computed_eaten', 'computed_forecast', 'protocols'
     )}
+    context['profile']=snapshot.get('profile',{})
     messages = [{'role': 'user', 'content': request_context(text, context)}]
     messages += [{'role': role, 'content': content} for role, content in rows]
     messages.append({'role': 'user', 'content': text[:12000]})
@@ -108,11 +106,7 @@ def answer(text, snapshot, database):
             return 'Groq временно ограничил запрос по бесплатной квоте. Попробуйте позже; /day и /calc доступны.'
         raise
     result = validated_plan_reply(text, context, result)
-    with sqlite3.connect(database) as db:
-        db.executemany(
-            'INSERT INTO conversation(day,role,content) VALUES (?,?,?)',
-            [(day, 'user', text[:12000]), (day, 'assistant', result)],
-        )
+    save(database,day,account,text,result)
     return result[:3800]
 
 

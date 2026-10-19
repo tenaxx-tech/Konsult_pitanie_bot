@@ -33,6 +33,8 @@ class LocalGoogleJournal:
                 day TEXT NOT NULL, version INTEGER NOT NULL, snapshot TEXT NOT NULL,
                 updated TEXT NOT NULL, synced_version INTEGER NOT NULL DEFAULT 0,
                 last_error TEXT NOT NULL DEFAULT '', UNIQUE(account,day))''')
+        from .accounts import Accounts
+        self.default_goals=Accounts(self.database).goals(self.account)
 
     @contextmanager
     def connect(self):
@@ -44,7 +46,8 @@ class LocalGoogleJournal:
             db.close()
 
     def _empty(self, day):
-        return dict(storage_notice='Сохранено локально; синхронизация с Google проверяется отдельно', day=day, state=None, meals=[], computed_eaten={k:'0' for k in ('kcal','protein','fat','carbs')},
+        goals=self.default_goals
+        return dict(storage_notice='Сохранено локально; синхронизация с Google проверяется отдельно', day=day, state={'id':day,'fields':dict(goals)} if goals else None, meals=[], computed_eaten={k:'0' for k in ('kcal','protein','fat','carbs')},
                     computed_forecast={k:'0' for k in ('kcal','protein','fat','carbs')}, protocols=PROTOCOLS)
 
     def read(self, day):
@@ -53,6 +56,10 @@ class LocalGoogleJournal:
             row = db.execute('SELECT snapshot,synced_version,version FROM google_diary WHERE account=? AND day=?', (self.account, day)).fetchone()
         snapshot = json.loads(row[0]) if row else self._empty(day)
         snapshot['google_sync'] = ('SYNCED' if row[1] == row[2] else 'PENDING') if row else 'NO_DATA'
+        from .accounts import Accounts
+        user=Accounts(self.database).get(self.account)
+        snapshot['account']=self.account
+        snapshot['profile']=user['profile'] if user else {}
         return snapshot
 
     def upsert(self, day, item, expected_version, correction=False):
@@ -89,9 +96,10 @@ class LocalGoogleJournal:
                 old['fields'] = fields
             else:
                 snapshot['meals'].append({'id':key,'fields':fields})
-            eaten, forecast = totals(snapshot['meals'],day)
+            eaten, forecast = totals([r for r in snapshot['meals'] if r['fields']['Status']!='CANCELLED'],day)
             snapshot['computed_eaten'], snapshot['computed_forecast'] = eaten.values(), forecast.values()
             state = dict(state or dict(Status='ACTIVE',CaloriesGoal=1957,ProteinMin=150,ProteinMax=160,FatMin=70,FatMax=80,CarbMax=170))
+            state.setdefault('Status','ACTIVE')
             state.update(DayKey=day,Date=day,Version=expected_version+1,LastUpdate=now)
             for prefix, nutrients in [('Eaten',eaten),('Forecast',forecast)]:
                 state.update(dict(zip((prefix+n for n in ('Kcal','Protein','Fat','Carbs')),map(float,nutrients.values().values()))))
@@ -150,11 +158,13 @@ class GoogleMirror:
         return r.json().get('values',[])
 
     def put_verified(self, row, values):
+        tab=getattr(self,'target_tab','BotJournal')
+        headers=getattr(self,'target_headers',HEADERS)
         if not self.verified:
-            if self.get('BotJournal!A1:E1') != [HEADERS]:
+            if self.get(tab+'!A1:E1') != [headers]:
                 raise SyncError('Dedicated BotJournal header mismatch')
             self.verified = True
-        cell = 'BotJournal!A'+str(row)+':E'+str(row)
+        cell = tab+'!A'+str(row)+':E'+str(row)
         existing = self.get(cell)
         if existing and (existing[0][:2] != values[:2] or int(existing[0][2])>values[2] or (int(existing[0][2])==values[2] and existing[0][3]!=values[3])):
             raise SyncError('Mirror row conflict; do not overwrite')
@@ -164,6 +174,20 @@ class GoogleMirror:
         if [[str(v) for v in r] for r in self.get(cell)] != [expected]:
             raise SyncError('Google readback mismatch')
 
+    def sync_profiles(self, database):
+        from .accounts import Accounts
+        users=Accounts(database)
+        with users.db() as db:
+            rows=db.execute('SELECT rowid,account,version,profile,updated,first_start,trial_end,stage FROM bot_users WHERE version>synced_version LIMIT 20').fetchall()
+        transport=GoogleMirror.__new__(GoogleMirror)
+        transport.base=self.base;transport.session=self.session;transport.verified=False
+        transport.target_tab='BotProfiles';transport.target_headers=['AccountKey','RecordType','Version','ProfileJson','UpdatedAt']
+        for ident,account,version,raw,updated,first,trial,stage in rows:
+            profile=json.dumps(dict(profile=json.loads(raw),first_start=first,trial_end=trial,stage=stage),ensure_ascii=False)
+            try:transport.put_verified(ident+1,[account,'PROFILE',version,profile,updated])
+            except Exception:continue
+            with users.db() as db:db.execute('UPDATE bot_users SET synced_version=? WHERE account=? AND version=?',(version,account,version))
+
 
 def start_exporter(journal, transport, interval=30):
     stop = Event()
@@ -171,6 +195,7 @@ def start_exporter(journal, transport, interval=30):
         while not stop.is_set():
             try:
                 journal.sync_once(transport)
+                if hasattr(transport,'sync_profiles'):transport.sync_profiles(journal.database)
             except Exception:
                 pass  # Pending data remains durable; no credentials in logs.
             stop.wait(interval)

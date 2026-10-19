@@ -63,7 +63,8 @@ class MenuTests(unittest.TestCase):
         first=json.loads(urlopen.call_args_list[0].args[0].data)
         self.assertEqual(first['scope'],{'type':'chat','chat_id':42})
         self.assertEqual([v['command'] for v in first['commands']],
-                         ['menu','day','sync','food','photo','plan','week','help'])
+                         ['menu','day','sync','food','photo','plan','week','help',
+                          'history','correct','confirm','cancel','close','profile','notifications','feedback'])
         self.assertFalse(configure('test',''))
 
     def test_menu_setup_failure_does_not_break_bot(self):

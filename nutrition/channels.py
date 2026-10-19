@@ -16,6 +16,12 @@ from .api import calculate
 from .airtable import AirtableJournal, Client, SyncError
 
 LOCK=Lock()
+ACCOUNT_LOCKS={}
+
+
+def account_lock(account):
+    with LOCK:
+        return ACCOUNT_LOCKS.setdefault(account,Lock())
 CALC_USAGE=('Для расчёта укажите порции в JSON. Пример:\n'
             '/calc {"portions":[{"name":"Продукт","grams":100,'
             '"per100":{"kcal":120,"protein":10,"fat":5,"carbs":8},'
@@ -88,6 +94,8 @@ def _record_items(remote, day, meal, items, event_id, status):
     state=snapshot['state']['fields'] if snapshot['state'] else {}
     version=state.get('Version',0)
     event_hash=hashlib.sha256(event_id.encode()).hexdigest()[:20]
+    from .google_storage import LocalGoogleJournal
+    batch=[]
     for index,item in enumerate(items,1):
         try:
             grams=Decimal(str(item['grams']))
@@ -99,14 +107,20 @@ def _record_items(remote, day, meal, items, event_id, status):
         per100={key:value*Decimal(100)/grams for key,value in totals.items()}
         # Keep model-derived nutrition values explicitly marked approximate.
         estimated=True
-        source='AI estimate' if estimated else 'User-provided label'
-        portion=Portion(str(item['name'])[:160],grams,Nutrients(**per100),source,'ready',estimated)
+        source=item.get('source_detail','AI estimate') if estimated else 'User-provided label'
+        portion=Portion(str(item['name'])[:160],grams,Nutrients(**per100),source,item.get('basis','ready'),estimated)
         key=f'{day}|{meal}|{event_hash}_{index}'
         payload={'MealItemKey':key,'Meal':meal,'Status':status,'Source':'ESTIMATE' if estimated else 'LABEL',
                  'portion':portion.record()}
+        if isinstance(remote,LocalGoogleJournal):
+            batch.append(payload)
+            continue
         result=remote.upsert(day,payload,version)
         state=result['state']['fields'] if result['state'] else {}
         version=state.get('Version',version+1)
+    if batch:
+        from .diary_service import mutate
+        mutate(remote,day,'add',event_id+':'+status,version,items=batch)
     return remote.read(day)
 
 
@@ -125,13 +139,72 @@ def _intake_reply(result, items, status):
 def answer(text, remote_factory=None, database=None,
            event_id='manual-event', owner_key=None, attachment_ids=None):
     database=database or os.environ.get('CHANNEL_DB','channels.sqlite3')
+    managed=remote_factory is None and owner_key is not None
+    current_day=today()
+    accounts=None
+    if managed:
+        from .accounts import Accounts, route, is_admin
+        accounts=Accounts(database)
+        previous_user=accounts.get(owner_key)
+        direct=route(accounts,owner_key,text)
+        if direct is not None:
+            registered=accounts.get(owner_key)
+            if (previous_user and previous_user['stage']=='timezone' and registered and registered['stage']=='review'
+                    and os.environ.get('GIGACHAT_AUTHORIZATION_KEY')):
+                from .google_storage import LocalGoogleJournal
+                from .gigachat_chat import answer as first_plan
+                day=datetime.now(ZoneInfo(registered['profile']['timezone'])).date().isoformat()
+                snapshot=LocalGoogleJournal(database,owner_key).read(day)
+                local_time=datetime.now(ZoneInfo(registered['profile']['timezone'])).strftime('%H:%M')
+                try:
+                    menu=first_plan('Составь предварительный план питания с граммовками на остаток дня. '
+                                    'Местное время '+local_time+'. Учитывай предпочтения, исключения и аллергию из профиля. '
+                                    'Используй цели этого пользователя. Ответ до 1800 символов. '
+                                    'В новом дневнике нет сведений о съеденном. Это не означает, что человек не ел. '
+                                    'Покажи ознакомительный вариант и уточни, что уже было съедено; продукты не записывай.',snapshot,database)
+                    if len(direct)+len(menu)<3800:return direct+'\n\n'+menu
+                    return direct+'\n\nМеню подготовлено, но слишком длинное для одного сообщения. После /accept отправьте /plan для полного варианта.'
+                except SyncError:return direct+'\n\nМеню пока не удалось рассчитать. После /accept повторите /plan.'
+            return direct
+        user=accounts.get(owner_key)
+        current_day=datetime.now(ZoneInfo(user['profile'].get('timezone','Asia/Yekaterinburg'))).date().isoformat()
+        cmd=text.strip().split(' ')[0].lower()
+        if not accounts.active(owner_key) and cmd not in ('/day','/history','/sync','/menu','/help','/briefing'):
+            return 'Пробные 72 часа завершились. История доступна через /day и /history. Оплата ещё не подключена; новые записи пока недоступны.'
     if remote_factory is None:
-        remote_factory = lambda: configured_journal(database)
+        remote_factory = lambda: configured_journal(database,owner_key)
     from .telegram_menu import normalize, MENU_TEXT
     text=normalize(text)
     command, _, payload=text.strip().partition(' ')
     command=command.lower()
+    from .google_storage import LocalGoogleJournal
+    if managed:
+        remote=remote_factory()
+        from .diary_commands import route as diary_route,pending_close
+        if isinstance(remote,LocalGoogleJournal):
+            reply=pending_close(remote,text,event_id)
+            if reply is not None:return reply
+            reply=diary_route(remote,text,current_day,event_id)
+            if reply is not None:
+                if command in ('/correct','/confirm','/cancel') and reply.startswith('Изменение сохранено'):
+                    _clear_pending(database,owner_key)
+                return reply
     pending=_pending(database,owner_key)
+    resume_intake=False
+    if owner_key:
+        with sqlite3.connect(database) as db:
+            db.execute('CREATE TABLE IF NOT EXISTS intake_questions(account TEXT PRIMARY KEY,text TEXT NOT NULL,event TEXT NOT NULL)')
+            question=db.execute('SELECT text FROM intake_questions WHERE account=?',(owner_key,)).fetchone()
+            if question and (_negative(text) or command=='/forget'):
+                db.execute('DELETE FROM intake_questions WHERE account=?',(owner_key,))
+                return 'Уточнение отменено. Новых продуктов не записывал.'
+        if question and not command.startswith('/'):
+            text=question[0]+'\nУточнение пользователя: '+text
+            resume_intake=True
+    cached_input=_event_data(database,event_id,'intake_input')
+    if cached_input is not None:
+        text=cached_input
+        resume_intake=True
     if pending and _affirmative(text):
         result=_record_items(remote_factory(),pending['day'],pending['meal'],pending['items'],pending['event_id'],'CONFIRMED')
         _clear_pending(database,owner_key)
@@ -150,7 +223,7 @@ def answer(text, remote_factory=None, database=None,
                 'Для упаковки сфотографируйте этикетку КБЖУ. Если это только оценка, бот запросит '
                 'подтверждение перед записью. Если уже съели, укажите это в подписи.')
     if command in ('/day','/sync','сегодня'):
-        data=remote_factory().read(today())
+        data=remote_factory().read(current_day)
         state=data['state']['fields'] if data['state'] else {}
         status=state.get('Status')
         if isinstance(status,dict):
@@ -197,14 +270,15 @@ def answer(text, remote_factory=None, database=None,
             return 'Не удалось прочитать данные для расчёта.\n'+CALC_USAGE
         n=result['total']
         return f"{'≈ ' if result['estimated'] else ''}{n['kcal']} ккал · Б {n['protein']} · Ж {n['fat']} · У {n['carbs']} г"
-    if _intake_candidate(text, bool(attachment_ids)) and not os.environ.get('GIGACHAT_AUTHORIZATION_KEY'):
+    if (resume_intake or _intake_candidate(text, bool(attachment_ids))) and not os.environ.get('GIGACHAT_AUTHORIZATION_KEY'):
         return 'Для автоматического разбора и записи еды нужен подключённый GigaChat. Сейчас данные не записаны; проверьте секрет GIGACHAT_AUTHORIZATION_KEY на BotHost.'
     if os.environ.get('GIGACHAT_AUTHORIZATION_KEY'):
         from .gigachat_chat import answer as chat
         is_explicit=_explicit_consumption(text)
-        if _intake_candidate(text, bool(attachment_ids)):
+        if resume_intake or _intake_candidate(text, bool(attachment_ids)):
             from .gigachat_chat import extract_intake
-            snapshot=remote_factory().read(today())
+            text=_event_data(database,event_id,'intake_input',text)
+            snapshot=remote_factory().read(current_day)
             data=_event_data(database,event_id,'intake')
             if data is None:
                 data=extract_intake(text,snapshot['day'],snapshot.get('protocols'),attachment_ids)
@@ -216,8 +290,21 @@ def answer(text, remote_factory=None, database=None,
                 raise SyncError('GigaChat returned an invalid date')
             from datetime import date
             date.fromisoformat(day)
+            if data['action']=='record' and day>current_day:
+                return 'Дата фактически съеденной еды оказалась в будущем. Уточните дату; пока ничего не записано.'
             if data['action']=='clarify' or not data['items']:
+                if owner_key:
+                    with sqlite3.connect(database) as db:db.execute('INSERT OR REPLACE INTO intake_questions VALUES(?,?,?)',(owner_key,text[:12000],event_id))
                 return data.get('reply') or 'Уточните, пожалуйста, продукт и количество.'
+            from .intake_checks import validate,references
+            data['items']=references(data['items'],text)
+            question=validate(data['items'],text)
+            if question:
+                if owner_key:
+                    with sqlite3.connect(database) as db:db.execute('INSERT OR REPLACE INTO intake_questions VALUES(?,?,?)',(owner_key,text[:12000],event_id))
+                return question
+            if owner_key:
+                with sqlite3.connect(database) as db:db.execute('DELETE FROM intake_questions WHERE account=?',(owner_key,))
             if attachment_ids and not is_explicit:
                 if not owner_key:
                     return data.get('reply') or 'Напишите «съел», если это нужно подтвердить и внести в дневник.'
@@ -234,13 +321,13 @@ def answer(text, remote_factory=None, database=None,
             if data['action']=='proposal' and owner_key:
                 _set_pending(database,owner_key,day,data['meal'],data['items'],event_id)
                 return (data.get('reply') or 'Подготовил оценку.') + '\nОтветьте «Съел» для записи или «Отмена», если не нужно вносить.'
-        return chat(text, remote_factory().read(today()), database)
+        return chat(text, remote_factory().read(current_day), database)
     if os.environ.get('GEMINI_API_KEY'):
         from .gemini_chat import answer as chat
-        return chat(text, remote_factory().read(today()), os.environ.get('CHANNEL_DB','channels.sqlite3'))
+        return chat(text, remote_factory().read(current_day), database)
     if os.environ.get('GROQ_API_KEY'):
         from .groq_chat import answer as chat
-        return chat(text, remote_factory().read(today()), os.environ.get('CHANNEL_DB','channels.sqlite3'))
+        return chat(text, remote_factory().read(current_day), database)
     return 'ИИ пока не настроен: добавьте GIGACHAT_AUTHORIZATION_KEY (GigaChat), GEMINI_API_KEY (Gemini) или GROQ_API_KEY (Groq) в секреты сервера. /day и /calc доступны.'
 
 
@@ -330,7 +417,8 @@ def handler(database, responder=None, sender=send):
                     allowed=os.environ.get('TELEGRAM_OWNER_ID','')
                     user=str(message.get('from',{}).get('id',''))
                     peer=message.get('chat',{}).get('id')
-                    if not allowed or user!=allowed or message.get('chat',{}).get('type')!='private':
+                    public=os.environ.get('NUTRITION_MULTIUSER_ENABLED')=='true'
+                    if not allowed or (user!=allowed and not public) or message.get('chat',{}).get('type')!='private' or str(peer)!=user:
                         self.reply(200,'ok');return
                     if 'update_id' not in data:
                         self.reply(400,'missing event');return
@@ -358,7 +446,7 @@ def handler(database, responder=None, sender=send):
                 if not message_text and not has_photo:
                     self.reply(200,'ok');return
                 # Durable duplicate protection for successful deliveries.
-                with LOCK, sqlite3.connect(database) as db:
+                with account_lock(platform+':'+user), sqlite3.connect(database) as db:
                     if db.execute('SELECT 1 FROM delivered WHERE event=?',(event,)).fetchone():
                         self.reply(200,'ok');return
                     cached_reply=_event_data(database,event,'reply')
@@ -399,17 +487,21 @@ def handler(database, responder=None, sender=send):
     return Handler
 
 
-def configured_journal(database):
+def configured_journal(database, account=None):
     storage = os.environ.get('NUTRITION_STORAGE', 'google')
     if storage == 'google':
         from .google_storage import LocalGoogleJournal
-        return LocalGoogleJournal(database)
+        return LocalGoogleJournal(database, account)
     if storage == 'airtable':
+        if account and account!='telegram:'+os.environ.get('TELEGRAM_OWNER_ID',''):
+            raise SyncError('Архивное хранилище доступно только владельцу')
         return AirtableJournal(Client())  # explicit legacy mode for rollback only
     raise SyncError('Unknown NUTRITION_STORAGE; no automatic fallback')
 
 
 def main():
+    if os.environ.get('NUTRITION_MULTIUSER_ENABLED')=='true' and os.environ.get('NUTRITION_STORAGE','google')!='google':
+        raise SystemExit('Multi-user mode requires isolated Google/local storage')
     enabled=False
     for prefix,required in [('TELEGRAM',('BOT_TOKEN','WEBHOOK_SECRET','OWNER_ID')),
                             ('VK',('ACCESS_TOKEN','CALLBACK_SECRET','GROUP_ID','OWNER_ID','CONFIRMATION_CODE'))]:
@@ -429,6 +521,11 @@ def main():
     if os.environ.get('NUTRITION_STORAGE', 'google') == 'google':
         from .google_storage import GoogleMirror, start_exporter
         start_exporter(journal, GoogleMirror())
+        from .accounts import Accounts
+        if os.environ.get('TELEGRAM_OWNER_ID'):
+            Accounts(database).start('telegram:'+os.environ['TELEGRAM_OWNER_ID'])
+        from .scheduler import start as start_scheduler
+        start_scheduler(database,send)
     server=ThreadingHTTPServer((os.environ.get('API_HOST','127.0.0.1'),int(os.environ.get('PORT','8081'))),handler(database))
     if os.environ.get('TELEGRAM_BOT_TOKEN'):
         from .telegram_menu import configure
