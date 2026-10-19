@@ -335,8 +335,8 @@ def send(platform,peer,text,event_id):
     if platform=='telegram':
         token=os.environ['TELEGRAM_BOT_TOKEN']
         url='https://api.telegram.org/bot'+token+'/sendMessage'
-        from .telegram_menu import keyboard
-        body=json.dumps({'chat_id':peer,'text':text,'reply_markup':keyboard()},ensure_ascii=False).encode()
+        from .onboarding_ui import reply_keyboard
+        body=json.dumps({'chat_id':peer,'text':text,'reply_markup':reply_keyboard(peer)},ensure_ascii=False).encode()
         headers={'Content-Type':'application/json'}
     else:
         url='https://api.vk.com/method/messages.send'

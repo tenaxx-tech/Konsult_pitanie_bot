@@ -95,6 +95,8 @@ def profile_reply(u):
 
 def route(accounts, account, text):
     """Return a direct local reply, or None when the diary may handle the message."""
+    from .onboarding_ui import ACTIONS
+    text=ACTIONS.get(text.strip(),text)
     command,_,payload=text.strip().partition(' ')
     command=command.lower()
     u=accounts.get(account)
@@ -184,9 +186,14 @@ def route(accounts, account, text):
             if v not in ('снижение','поддержание','набор'):raise ValueError()
             p['goal']=v
         elif stage=='preferences':p['preferences']=value[:1500]
-        elif stage=='timezone':ZoneInfo(value);p['timezone']=value
+        elif stage=='timezone':
+            from .onboarding_ui import resolve_city
+            p['timezone']=resolve_city(value)
+            p['city']=value.strip()
         else:return 'Для продолжения отправьте /start.'
-    except (ValueError,KeyError):return 'Не удалось распознать ответ. '+QUESTIONS.get(stage,'/profile')
+    except (ValueError,KeyError):
+        if stage=='timezone':return 'Не удалось однозначно определить часовой пояс города. Напишите ближайший крупный город из вашего часового пояса или название пояса, например Asia/Yekaterinburg. Текущий пояс не изменён.'
+        return 'Не удалось распознать ответ. '+QUESTIONS.get(stage,'/profile')
     stages=list(QUESTIONS)
     next_stage=stages[stages.index(stage)+1] if stage!=stages[-1] else 'review'
     if next_stage=='review':
@@ -199,6 +206,6 @@ def route(accounts, account, text):
 
 
 QUESTIONS=dict(height='Ваш рост в сантиметрах?',weight='Вес в килограммах?',age='Возраст в полных годах (18–80)?',
-               sex='Пол для расчётной формулы: м или ж?',activity='Обычная активность: низкая, средняя или высокая?',
+               sex='Выберите пол для расчётной формулы кнопкой: мужчина или женщина.',activity='Обычная активность: низкая, средняя или высокая?',
                goal='Цель: снижение, поддержание или набор?',preferences='Пищевые предпочтения, исключения и аллергии? Если нет — напишите «нет».',
-               timezone='Часовой пояс, например Asia/Yekaterinburg или Europe/Moscow?')
+               timezone='В каком городе вы живёте? Выберите кнопку или напишите город. Если город не найден, можно указать часовой пояс, например Asia/Yekaterinburg.')
