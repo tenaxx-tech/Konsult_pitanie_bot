@@ -9,6 +9,14 @@ from .airtable import SyncError
 from .planning import PLAN_REQUEST
 
 KEYS=('kcal','protein','fat','carbs')
+PLAN_SCHEMA={'type':'object','properties':{'items':{'type':'array','maxItems':8,'items':{
+    'type':'object','properties':{
+        'name':{'type':'string'},'meal':{'type':'string','enum':['BREAKFAST','LUNCH','SNACK','DINNER']},
+        'grams':{'type':'number'},'basis':{'type':'string','enum':['raw','ready']},
+        'per100':{'type':'object','properties':{k:{'type':'number'} for k in KEYS},
+                  'required':list(KEYS),'additionalProperties':False}},
+    'required':['name','meal','grams','basis','per100'],'additionalProperties':False}}},
+    'required':['items'],'additionalProperties':False}
 
 
 def applies(text):
@@ -129,12 +137,28 @@ per100 — справочная оценка на 100 г; массы и КБЖУ
     messages=[{'role':'user','content':json.dumps({'local_hour':hour,'context':context,'request':text},ensure_ascii=False)}]
     for attempt in range(2):
         try:
-            raw=request({'instructions':instructions,'input':messages,'max_output_tokens':1800})
+            body={'instructions':instructions,'input':messages,'max_output_tokens':1800}
+            if attempt==0:body['response_format']={'type':'json_schema','json_schema':{'name':'daily_plan','strict':True,'schema':PLAN_SCHEMA}}
+            raw=request(body)
             raw=re.sub(r'^```(?:json)?\s*|\s*```$','',raw.strip(),flags=re.I)
             rows=validate(json.loads(raw),snapshot,hour)
             return render(rows,snapshot)
         except (ValueError,TypeError,KeyError,ArithmeticError) as exc:
             messages.append({'role':'user','content':'Исправь JSON: '+str(exc)+'. Соблюдай исходные данные и формат.'})
-        except SyncError:
+        except SyncError as exc:
+            if attempt==0 and str(exc)=='GigaChat response incomplete':
+                messages.append({'role':'user','content':'Верни только JSON по этой схеме: '+json.dumps(PLAN_SCHEMA,ensure_ascii=False)})
+                continue
             break
+    # A known small pantry portion can still be offered if model formatting fails.
+    # This is an explicit generic estimate, never a product label or a diary write.
+    quantities=profile.get('pantry_quantities') or {}
+    pizza=next((q for key,q in quantities.items() if 'пиц' in key),None)
+    if pizza and 'пицц' in profile.get('pantry','').casefold() and not profile.get('preferences'):
+        try:
+            row={'name':'Пицца (средняя справочная оценка)','meal':'SNACK','grams':pizza['grams'],
+                 'basis':'ready','per100':dict(zip(KEYS,(275,12,11,32)))}
+            return render(validate({'items':[row]},snapshot,hour),snapshot)
+        except (ValueError,TypeError,KeyError,ArithmeticError):
+            pass
     return render([],snapshot)
