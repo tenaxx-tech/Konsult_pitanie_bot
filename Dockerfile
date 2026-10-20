@@ -7,6 +7,7 @@ RUN apt-get update \
        --output /usr/local/share/ca-certificates/russian_trusted_root_ca.crt \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir "google-auth[requests]>=2.38,<3" tzdata
 COPY nutrition /app/nutrition
 COPY main.py /app/main.py
 RUN mkdir -p /app/data

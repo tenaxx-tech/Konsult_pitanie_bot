@@ -49,6 +49,18 @@ class Tests(unittest.TestCase):
         self.call('/telegram/webhook',self.event());self.call('/telegram/webhook',self.event())
         self.assertEqual(len(self.sent),1)
 
+    def test_public_onboarding_does_not_grant_admin_or_other_history(self):
+        from nutrition.accounts import Accounts
+        self.server.RequestHandlerClass=handler(self.db,sender=lambda *args:self.sent.append(args))
+        with patch.dict(os.environ,{'NUTRITION_MULTIUSER_ENABLED':'true'}):
+            event=self.event(99);event['message']['text']='/start'
+            self.assertEqual(self.call('/telegram/webhook',event)[0],200)
+            self.assertIn('/agree',self.sent[-1][2])
+            self.assertEqual(Accounts(self.db).get('telegram:99')['stage'],'consent')
+            event['update_id']=2;event['message']['text']='/admin'
+            self.call('/telegram/webhook',event)
+            self.assertIn('только администратору',self.sent[-1][2])
+
     def test_failed_send_reuses_durable_reply_after_retry(self):
         from unittest.mock import Mock
         responder=Mock(return_value='Записал еду')

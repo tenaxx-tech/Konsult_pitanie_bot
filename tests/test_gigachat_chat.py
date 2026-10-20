@@ -43,13 +43,14 @@ class Tests(unittest.TestCase):
         expected = {'action':'proposal','reply':'Похоже на обед','day':'2026-10-06',
                     'meal':'LUNCH','items':[]}
         with patch.dict('os.environ', GIGACHAT_AUTHORIZATION_KEY='private-key'):
-            with patch.object(chat, 'request', return_value=json.dumps(expected)) as call:
+            with patch.object(chat, 'describe_products',return_value='Курица и огурец'), patch.object(chat, 'request', return_value=json.dumps(expected)) as call:
                 result = chat.extract_intake('Что на фото?', '2026-10-06', {}, ['file_12345678'])
         body = call.call_args.args[0]
         self.assertEqual(result, expected)
-        self.assertEqual(body['model'], chat.DEFAULT_VISION_MODEL)
+        self.assertIsNone(body['model'])
         self.assertEqual(body['response_format']['type'], 'json_schema')
-        self.assertEqual(body['input'][1]['attachments'], ['file_12345678'])
+        self.assertNotIn('attachments',body['input'][1])
+        self.assertIn('Курица и огурец',body['input'][1]['content'])
 
     def test_access_token_is_cached(self):
         with patch.dict('os.environ', GIGACHAT_AUTHORIZATION_KEY='private-key'):
