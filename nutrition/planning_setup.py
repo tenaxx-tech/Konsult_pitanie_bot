@@ -7,6 +7,39 @@ def handle(accounts, account, text, day, remote_factory, attachment_ids=None):
     user=accounts.get(account)
     profile=user['profile']
     lower=text.casefold().replace('ё','е').strip()
+    # A bare food list during setup is ambiguous: never guess pantry vs fact.
+    choices={'🥫 Есть дома':'pantry','🍽 Уже съел(а)':'eaten','🧮 Только рассчитать':'estimate'}
+    pending=profile.get('food_context_question')
+    if pending and pending.get('day')!=day:
+        profile.pop('food_context_question',None)
+        accounts.save(account,profile,user['stage'])
+        pending=None
+    if pending and text.strip() in choices:
+        intent=choices[text.strip()]
+        description=pending['text']
+        profile.pop('food_context_question',None)
+        accounts.save(account,profile,user['stage'])
+        if intent=='pantry':
+            text='Для плана: '+description
+            lower=text.casefold()
+        else:
+            return {'intake_text':('Съел: ' if intent=='eaten' else 'Рассчитай, это не факт еды: ')+description}
+    elif pending and _explicit_consumption(text):
+        profile.pop('food_context_question',None)
+        accounts.save(account,profile,user['stage'])
+    elif pending and not text.startswith('/') and not attachment_ids and not _explicit_consumption(text):
+        if not any(x in lower for x in ('не знаю','калорий','посчитай')):
+            pending['text']=(pending['text']+'\nУточнение: '+text)[:8000]
+            profile['food_context_question']=pending
+            accounts.save(account,profile,user['stage'])
+        return 'Калорийность и БЖУ рассчитаю сам. Уточните кнопкой: это продукты дома, уже съеденное или только расчёт?'
+    elif (profile.get('planning_setup') and not attachment_ids and not text.startswith('/')
+          and not _explicit_consumption(text) and
+          re.search(r'картоф|наг[г]?ет|огур|творог|яйц|куриц|греч|банан|помид|рыб|макарон|кефир|йогур',lower) and
+          not any(x in lower for x in ('для плана','для меню','дома есть','есть дома','имеющиеся продукты','в холодильнике'))):
+        profile['food_context_question']={'day':day,'text':text[:8000]}
+        accounts.save(account,profile,user['stage'])
+        return 'Это продукты, которые есть дома, или вы уже их съели? Выберите кнопку. Калорийность и БЖУ я рассчитаю сам; нужны только продукты и количество.'
     no_food=bool(re.fullmatch(r'(?:сегодня\s+)?(?:я\s+)?(?:еще\s+)?не\s+(?:ел[аи]?|кушал[аи]?)(?:\s+сегодня)?[.!]?',lower))
     if no_food:
         profile['no_food_confirmed_day']=day
@@ -34,10 +67,12 @@ def handle(accounts, account, text, day, remote_factory, attachment_ids=None):
                 '\nЧто уже сегодня съели и выпили? Напишите с примерным количеством. Если ничего — «Сегодня ещё не ел». '
                 'После записи съеденного нажмите «🥗 План питания».')
     from .planning import PLAN_REQUEST
-    if PLAN_REQUEST.search(text or '') and profile.get('planning_setup'):
+    if PLAN_REQUEST.search(text or '') and (profile.get('planning_setup') or (profile.get('pantry_day') and profile.get('pantry_day')!=day)):
         if profile.get('pantry_day')!=day:
             return 'Сначала пришлите фото или список продуктов, которые есть, с подписью «Для плана». Отдельно напишите, что уже сегодня съели и выпили.'
         snapshot=remote_factory().read(day)
         if not snapshot.get('meals') and profile.get('no_food_confirmed_day')!=day:
             return 'Перед подбором меню уточните, что уже сегодня съели и выпили, с количеством. Если ещё ничего — напишите «Сегодня ещё не ел».'
+        profile['planning_setup']=False
+        accounts.save(account,profile,user['stage'])
     return None

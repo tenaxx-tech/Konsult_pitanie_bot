@@ -81,8 +81,13 @@ def reply_keyboard(peer):
     if os.path.isfile(database):
         try:
             with sqlite3.connect(database,timeout=2) as db:
-                row=db.execute('SELECT stage FROM bot_users WHERE account=?',('telegram:'+str(peer),)).fetchone()
-            if row:return stage_keyboard(row[0])
+                row=db.execute('SELECT stage,profile FROM bot_users WHERE account=?',('telegram:'+str(peer),)).fetchone()
+            if row:
+                import json
+                if json.loads(row[1]).get('food_context_question'):
+                    return {'keyboard':[[{'text':'🥫 Есть дома'},{'text':'🍽 Уже съел(а)'}],
+                                         [{'text':'🧮 Только рассчитать'}]],'resize_keyboard':True}
+                return stage_keyboard(row[0])
         except sqlite3.Error:
             pass
     return stage_keyboard('ready')

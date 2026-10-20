@@ -48,7 +48,7 @@ def _negative(text):
 
 
 def _intake_candidate(text, has_attachment=False):
-    return has_attachment or _explicit_consumption(text) or bool(re.search(
+    return has_attachment or _explicit_consumption(text) or bool(re.search(r'\d+\s*(?:г|гр|грамм|мл)\b',text.casefold())) or text.startswith('Рассчитай, это не факт еды:') or bool(re.search(
         r'\b(запланируй|запланировать|в\s+план|добавь\s+в\s+план)\b',text.casefold()))
 
 
@@ -136,6 +136,21 @@ def _intake_reply(result, items, status):
             f'{result.get("storage_notice", "Проверено чтением Airtable")}, версия {version}.')
 
 
+def _estimate_reply(items):
+    # Model text is not trusted for totals or comparisons with the user's goal.
+    keys=('kcal','protein','fat','carbs')
+    totals={k:sum(Decimal(str(item[k])) for item in items) for k in keys}
+    lines=['Предварительная справочная оценка (≈):']
+    for item in items:
+        lines.append(f"{item['name']} — {Decimal(str(item['grams'])):.1f} г: "
+                     f"{Decimal(str(item['kcal'])):.1f} ккал; Б {Decimal(str(item['protein'])):.1f}, "
+                     f"Ж {Decimal(str(item['fat'])):.1f}, У {Decimal(str(item['carbs'])):.1f} г.")
+    lines.append(f"Итого: ≈{totals['kcal']:.1f} ккал; Б {totals['protein']:.1f}, "
+                 f"Ж {totals['fat']:.1f}, У {totals['carbs']:.1f} г.")
+    lines.append('Для приготовленных блюд количество масла и состав влияют на оценку. Это расчёт, в дневник пока не записано.')
+    return '\n'.join(lines)
+
+
 def answer(text, remote_factory=None, database=None,
            event_id='manual-event', owner_key=None, attachment_ids=None):
     database=database or os.environ.get('CHANNEL_DB','channels.sqlite3')
@@ -174,7 +189,11 @@ def answer(text, remote_factory=None, database=None,
     if managed:
         from .planning_setup import handle as setup_handle
         setup_reply=setup_handle(accounts,owner_key,text,current_day,remote_factory,attachment_ids)
-        if setup_reply is not None:return setup_reply
+        if isinstance(setup_reply,dict):
+            text=setup_reply['intake_text']
+            command,_,payload=text.strip().partition(' ')
+            command=command.lower()
+        elif setup_reply is not None:return setup_reply
     pending=_pending(database,owner_key)
     resume_intake=False
     if owner_key:
@@ -269,6 +288,8 @@ def answer(text, remote_factory=None, database=None,
             if data is None:
                 data=extract_intake(text,snapshot['day'],snapshot.get('protocols'),attachment_ids)
                 data=_event_data(database,event_id,'intake',data)
+            if data.get('action')=='record' and not is_explicit:
+                data={**data,'action':'proposal'}
             for item in data.get('items',[]):
                 item['estimated']=True
             day=data['day'] or snapshot['day']
@@ -295,7 +316,7 @@ def answer(text, remote_factory=None, database=None,
                 if not owner_key:
                     return data.get('reply') or 'Напишите «съел», если это нужно подтвердить и внести в дневник.'
                 _set_pending(database,owner_key,day,data['meal'],data['items'],event_id)
-                return (data.get('reply') or 'Распознал еду на фото.') + '\nЕсли вы это съели, ответьте «Съел»; для отмены — «Отмена». Пока в дневник не записывал.'
+                return _estimate_reply(data['items']) + '\nЕсли вы это съели, ответьте «Съел»; для отмены — «Отмена». Пока в дневник не записывал.'
             if is_explicit and data['action']=='record':
                 result=_record_items(remote_factory(),day,data['meal'],data['items'],event_id,'CONFIRMED')
                 return _intake_reply(result,data['items'],'CONFIRMED')
@@ -306,7 +327,7 @@ def answer(text, remote_factory=None, database=None,
                 return _intake_reply(result,data['items'],'PLANNED')+'\nЧтобы отметить план как съеденный, ответьте «Съел».'
             if data['action']=='proposal' and owner_key:
                 _set_pending(database,owner_key,day,data['meal'],data['items'],event_id)
-                return (data.get('reply') or 'Подготовил оценку.') + '\nОтветьте «Съел» для записи или «Отмена», если не нужно вносить.'
+                return _estimate_reply(data['items']) + '\nОтветьте «Съел» для записи или «Отмена», если не нужно вносить.'
         return chat(text, remote_factory().read(current_day), database)
     if os.environ.get('GEMINI_API_KEY'):
         from .gemini_chat import answer as chat

@@ -1,5 +1,6 @@
 """Owner-only GigaChat dialogue. Airtable context is read-only in this stage."""
 import json
+import math
 import os
 import re
 import sqlite3
@@ -83,9 +84,29 @@ def _get_access_token():
             expires_at = float(result.get('expires_at', time.time() + 1800))
         except (TypeError, ValueError):
             expires_at = time.time() + 1800
+        # OAuth expires_at can be epoch milliseconds; time.time() is seconds.
+        if expires_at > 100_000_000_000:
+            expires_at /= 1000
+        if not math.isfinite(expires_at):
+            expires_at = time.time() + 1800
+        expires_at = min(expires_at, time.time() + 1800)
         _access_token = token
         _token_expires_at = expires_at
         return token
+
+
+def _authorized_json(url, data, headers, timeout=45, method=None):
+    """Refresh a rejected access token once; never retry network/5xx ambiguity."""
+    for attempt in range(2):
+        token=_get_access_token()
+        req=Request(url,data=data,method=method,headers={**headers,'Authorization':'Bearer '+token})
+        try:
+            with urlopen(req,timeout=timeout) as response:
+                return json.load(response)
+        except HTTPError as exc:
+            if exc.code!=401 or attempt:
+                raise
+            _clear_token()
 
 
 def _chat_payload(body):
@@ -110,18 +131,9 @@ def _chat_payload(body):
 
 def request(body):
     payload = _chat_payload(body)
-    req = Request(
-        API_URL,
-        data=json.dumps(payload, ensure_ascii=False).encode(),
-        headers={
-            'Authorization': 'Bearer ' + _get_access_token(),
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-        },
-    )
     try:
-        with urlopen(req, timeout=45) as response:
-            result = json.load(response)
+        result = _authorized_json(API_URL,json.dumps(payload,ensure_ascii=False).encode(),
+                                  {'Content-Type':'application/json','Accept':'application/json'})
     except HTTPError as exc:
         reason = {
             401: 'access token rejected',
@@ -179,6 +191,9 @@ action=plan ставь только при явной просьбе сохра�
 а попроси подтвердить факт и при необходимости уточнить порцию.
 Не записывай вопросы, намерения «хочу съесть», отрицания и гипотетические примеры.
 Если нельзя определить продукт или порцию, action=clarify, items=[] и задай один короткий вопрос.
+Не требуй от пользователя знать калорийность и БЖУ: рассчитай их сам по справочным значениям,
+когда известны продукт и масса. Уточняй только существенные неизвестные (масса, масло, состав),
+а обычные справочные допущения явно называй. Ответ без «съел/выпил» — только proposal.
 Не заменяй число штук произвольной массой. Для яиц уточняй размер или массу без скорлупы;
 для ложки сметаны — жирность и наличие горки. Если оценка порции согласована, явно укажи
 допущение в reply. Для пельменей, круп и макарон различай сухой/замороженный и готовый вес.
@@ -200,7 +215,6 @@ def upload_image(content, content_type='image/jpeg', filename='meal.jpg'):
         raise SyncError('GigaChat image is empty or exceeds 15 MB')
     if content_type not in ('image/jpeg', 'image/png', 'image/tiff', 'image/bmp'):
         raise SyncError('Unsupported image type')
-    token = _get_access_token()
     boundary = '----Codex' + uuid.uuid4().hex
     safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', filename)[:80] or 'meal.jpg'
     body = (
@@ -209,14 +223,9 @@ def upload_image(content, content_type='image/jpeg', filename='meal.jpg'):
         ('\r\n--' + boundary + '\r\nContent-Disposition: form-data; name="purpose"\r\n\r\ngeneral\r\n'
          '--' + boundary + '--\r\n').encode()
     )
-    req = Request(FILES_URL, data=body, headers={
-        'Authorization': 'Bearer ' + token,
-        'Content-Type': 'multipart/form-data; boundary=' + boundary,
-        'Accept': 'application/json',
-    })
     try:
-        with urlopen(req, timeout=45) as response:
-            result = json.load(response)
+        result = _authorized_json(FILES_URL,body,{
+            'Content-Type':'multipart/form-data; boundary='+boundary,'Accept':'application/json'})
     except HTTPError as exc:
         raise SyncError('GigaChat file upload HTTP ' + str(exc.code)) from None
     except (URLError, OSError, TimeoutError):
