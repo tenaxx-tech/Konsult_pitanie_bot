@@ -329,6 +329,11 @@ def answer(text, snapshot, database):
     day = snapshot['day']
     from .conversations import load, save
     account=snapshot.get('account','telegram:'+os.environ.get('TELEGRAM_OWNER_ID',''))
+    from .daily_plan import applies, answer as daily_plan
+    if applies(text) and snapshot.get('profile'):
+        result=daily_plan(text,snapshot,request,POLICY)
+        save(database,day,account,text,result)
+        return result
     rows=load(database,day,account)
     context = {key: snapshot[key] for key in (
         'day', 'state', 'meals', 'computed_eaten', 'computed_forecast', 'protocols'
