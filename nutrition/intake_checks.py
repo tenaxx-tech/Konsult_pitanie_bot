@@ -43,7 +43,7 @@ def references(items, text):
     return items
 
 
-def validate(items, text):
+def validate(items, text, nutrition_only=False):
     """Return one clarification question rather than saving implausible estimates."""
     for item in items:
         try:
@@ -53,6 +53,7 @@ def validate(items, text):
         except (ValueError,KeyError,TypeError):return 'Уточните вес и КБЖУ: распознанные значения некорректны.'
         if p+f+c>grams*Decimal('1.05') or abs(kcal-(4*p+9*f+4*c))>max(Decimal(25),kcal*Decimal('.2')):
             return 'Калории и БЖУ распознанной порции не согласуются. Пришлите этикетку или уточните состав.'
+        if nutrition_only:continue
         name=item['name'].casefold()
         if 'пельмен' in name and not re.search(r'(после\s+варки|отварн|вар[её]н|заморож|до\s+варки|сырой\s+вес)',text.casefold()):
             return 'Пельмени взвешены после варки или замороженными? Сохраню весь приём пищи после уточнения.'

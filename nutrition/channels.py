@@ -222,6 +222,11 @@ def answer(text, remote_factory=None, database=None,
         text=cached_input
         resume_intake=True
     if pending and _affirmative(text):
+        from .intake_checks import references,validate
+        description='; '.join(str(item.get('name','')) for item in pending['items'])
+        pending['items']=references(pending['items'],description)
+        problem=validate(pending['items'],description,nutrition_only=True)
+        if problem:return problem+' Пока ничего не записано.'
         result=_record_items(remote_factory(),pending['day'],pending['meal'],pending['items'],pending['event_id'],'CONFIRMED')
         _clear_pending(database,owner_key)
         with sqlite3.connect(database) as db:db.execute('DELETE FROM intake_questions WHERE account=?',(owner_key,))
