@@ -14,6 +14,20 @@ def handle(accounts, account, text, day, remote_factory, attachment_ids=None):
     user=accounts.get(account)
     profile=user['profile']
     lower=text.casefold().replace('ё','е').strip()
+    quantity=re.fullmatch(r'(?:вес\s*[:—-]?\s*)?(\d+(?:[.,]\d+)?)\s*(?:грамм(?:а|ов)?|гр\.?|г\.?)\s*(.*)',lower)
+    if quantity and profile.get('pantry_day')==day and not attachment_ids and not _explicit_consumption(text):
+        product=quantity[2].strip(' .,!')
+        names=re.findall(r'[а-яa-z]{3,}',product)
+        pantry=profile.get('pantry','').casefold()
+        if names and any(name[:3] in pantry for name in names):
+            grams=float(quantity[1].replace(',','.'))
+            if not 0<grams<=10000:return 'Укажите доступную массу продукта в граммах, больше нуля и не более 10000.'
+            quantities=profile.get('pantry_quantities',{})
+            quantities[names[0][:3]]={'product':product,'grams':grams}
+            profile['pantry_quantities']=quantities
+            accounts.save(account,profile,user['stage'])
+            return (f'Уточнил доступную порцию для меню: {product} — {grams:g} г. '
+                    'Это запас для плана, съеденным не отмечал. Нажмите «🥗 План питания» или добавьте другие имеющиеся продукты.')
     # A bare food list during setup is ambiguous: never guess pantry vs fact.
     choices={'🥫 Есть дома':'pantry','🍽 Уже съел(а)':'eaten','🧮 Только рассчитать':'estimate'}
     pending=profile.get('food_context_question')
@@ -68,6 +82,7 @@ def handle(accounts, account, text, day, remote_factory, attachment_ids=None):
             if not description:
                 return 'Фото загрузилось, но продукты не удалось уверенно распознать. Пришлите более чёткое фото или перечислите их текстом. В дневник ничего не записано.'
             pantry+='\nПо фото (проверьте названия): '+description
+        if profile.get('pantry_day')!=day:profile.pop('pantry_quantities',None)
         if profile.get('pantry_day')==day and has_product_names(profile.get('pantry','')):
             old=profile['pantry']
             if pantry not in old:pantry=old+'\n'+pantry
