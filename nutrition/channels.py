@@ -361,16 +361,26 @@ def send(platform,peer,text,event_id):
         raise SyncError('Channel send failed; check channel access') from None
 
 
+def _telegram_has_image(message):
+    document=message.get('document') or {}
+    return bool(message.get('photo')) or (isinstance(document,dict) and (
+        str(document.get('mime_type','')).startswith('image/') or
+        bool(re.search(r'\.(?:jpe?g|png|bmp|tiff?)$',str(document.get('file_name','')),re.I))))
+
+
 def _telegram_photo(message):
     photos=message.get('photo') or []
-    if not photos:
+    document=message.get('document') or {}
+    if not _telegram_has_image(message):
         return None
+    if document.get('file_size',0)>15*1024*1024:
+        raise SyncError('Изображение больше 15 МБ. Отправьте его как обычное фото.')
     token=os.environ.get('TELEGRAM_BOT_TOKEN','')
     if not token:
         raise SyncError('Telegram photo download is not configured')
     import mimetypes
     from .gigachat_chat import upload_image
-    file_id=photos[-1].get('file_id')
+    file_id=photos[-1].get('file_id') if photos else document.get('file_id')
     if not file_id:
         raise SyncError('Telegram photo metadata is missing')
     def telegram_api(method,data=None):
@@ -395,7 +405,7 @@ def _telegram_photo(message):
         raise SyncError('Telegram photo download failed') from None
     if len(content)>15*1024*1024:
         raise SyncError('Telegram photo exceeds 15 MB')
-    mime=content_type if content_type.startswith('image/') else mimetypes.guess_type(path)[0]
+    mime=content_type if content_type.startswith('image/') else (document.get('mime_type') or mimetypes.guess_type(path)[0])
     return upload_image(content,mime or 'image/jpeg',os.path.basename(path))
 
 
@@ -449,7 +459,7 @@ def handler(database, responder=None, sender=send):
                 else:
                     self.reply(404,'not found');return
                 message_text=message.get('text') or message.get('caption') or ''
-                has_photo=platform=='telegram' and bool(message.get('photo'))
+                has_photo=platform=='telegram' and _telegram_has_image(message)
                 if not message_text and not has_photo:
                     self.reply(200,'ok');return
                 # Durable duplicate protection for successful deliveries.

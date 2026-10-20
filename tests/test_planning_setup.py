@@ -29,7 +29,7 @@ class PlanningSetupTests(unittest.TestCase):
     def test_inventory_photo_cannot_create_fact_or_pending_meal(self):
         with tempfile.TemporaryDirectory() as d:
             users=Accounts(d+'/db');u=users.start('telegram:2');p=u['profile'];p['planning_setup']=True
-            users.save('telegram:2',p,'ready');remote=Mock()
+            users.save('telegram:2',p,'ready');remote=Mock();remote.read.return_value={'meals':[]}
             with patch('nutrition.gigachat_chat.describe_products',return_value='Яйца'):
                 reply=handle(users,'telegram:2','Для плана','2026-10-20',lambda:remote,['photo'])
             self.assertIn('Яйца',reply);remote.assert_not_called()

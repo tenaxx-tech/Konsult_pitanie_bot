@@ -2,6 +2,13 @@
 import re
 
 
+def has_product_names(text):
+    value=text.casefold().strip()
+    value=re.sub(r'^(?:это\s+)?(?:продукты\s+)?для\s+(?:плана|меню)\s*[,:.!-]*\s*','',value)
+    value=re.sub(r'(?:я\s+)?(?:их\s+)?не\s+(?:ел[аи]?|съел[аи]?)[.!]?','',value)
+    return bool(re.search(r'[а-яa-z]{2}',value))
+
+
 def handle(accounts, account, text, day, remote_factory, attachment_ids=None):
     from .channels import _explicit_consumption
     user=accounts.get(account)
@@ -51,21 +58,35 @@ def handle(accounts, account, text, day, remote_factory, attachment_ids=None):
         any(x in lower for x in ('для плана','для меню','дома есть','есть дома','имеющиеся продукты','в холодильнике')))
     if inventory:
         pantry=text.strip()
+        if not attachment_ids and not has_product_names(pantry):
+            return ('В этом сообщении нет доступного изображения и названий продуктов. '
+                    'Прикрепите фото или файл изображения с подписью «Для плана», либо напишите названия продуктов. '
+                    'Список запасов не изменял, еду повторно не записывал.')
         if attachment_ids:
             from .gigachat_chat import describe_products
             description=describe_products(attachment_ids,text)
             if not description:
                 return 'Фото загрузилось, но продукты не удалось уверенно распознать. Пришлите более чёткое фото или перечислите их текстом. В дневник ничего не записано.'
             pantry+='\nПо фото (проверьте названия): '+description
+        if profile.get('pantry_day')==day and has_product_names(profile.get('pantry','')):
+            old=profile['pantry']
+            if pantry not in old:pantry=old+'\n'+pantry
+            else:pantry=old
         profile['pantry']=pantry[:4000]
         profile['pantry_day']=day
         accounts.save(account,profile,user['stage'])
-        return ('Продукты сохранены для подбора меню; съеденными их не отмечал.\n'+pantry[:2000]+
-                '\nЧто уже сегодня съели и выпили? Напишите с примерным количеством. Если ничего — «Сегодня ещё не ел». '
-                'После записи съеденного нажмите «🥗 План питания».')
+        snapshot=remote_factory().read(day)
+        confirmed=[row for row in snapshot.get('meals',[]) if row.get('fields',row).get('Status')=='CONFIRMED']
+        if confirmed:
+            next_step='Сегодня уже учтены съеденные продукты в дневнике. Повторно присылать их не нужно. Нажмите «🥗 План питания».'
+        elif profile.get('no_food_confirmed_day')==day:
+            next_step='Учёл, что сегодня вы ещё не ели. Нажмите «🥗 План питания».'
+        else:
+            next_step='Что уже сегодня съели и выпили? Напишите с примерным количеством. Если ничего — «Сегодня ещё не ел». После записи нажмите «🥗 План питания».'
+        return 'Продукты сохранены для подбора меню; съеденными их не отмечал.\n'+pantry[:2000]+'\n'+next_step
     from .planning import PLAN_REQUEST
     if PLAN_REQUEST.search(text or '') and (profile.get('planning_setup') or (profile.get('pantry_day') and profile.get('pantry_day')!=day)):
-        if profile.get('pantry_day')!=day:
+        if profile.get('pantry_day')!=day or not has_product_names(profile.get('pantry','')):
             return 'Сначала пришлите фото или список продуктов, которые есть, с подписью «Для плана». Отдельно напишите, что уже сегодня съели и выпили.'
         snapshot=remote_factory().read(day)
         if not snapshot.get('meals') and profile.get('no_food_confirmed_day')!=day:
