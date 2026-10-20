@@ -273,6 +273,9 @@ def describe_products(attachments, text=''):
 
 
 def extract_intake(text, day, protocols=None, attachments=None):
+    from .intake_checks import known_pizza_event
+    known=known_pizza_event(text,day) if not attachments else None
+    if known is not None:return known
     if attachments:
         description=describe_products(attachments,text)
         if not description:

@@ -5,6 +5,29 @@ from .core import number
 from .airtable import SyncError
 
 
+def known_pizza_event(text,day):
+    """Parse one explicit ready pizza portion, not arbitrary meals or recipes."""
+    lower=text.casefold().replace('ё','е').strip()
+    if not re.match(r'^(?:съел|съела|съели)\b',lower):return None
+    if re.search(r'этикетк|на\s*100|рецепт|\d{4}-\d{2}-\d{2}',lower):return None
+    match=re.match(r'^съел(?:а|и)?\s+(\d+(?:[.,]\d+)?)\s*(?:грамм(?:а|ов)?|гр\.?|г)\s+(?:домашн\w*\s+)?пицц\w*',lower)
+    if not match:return None
+    tail=lower[match.end():]
+    tail=re.sub(r'[.!]?\s*(?:рассчитай|посчитай)\s*(?:приблизительно|примерно)?[.!]?\s*$','',tail)
+    # Only description words are accepted. Another food, amount or action must
+    # go through ordinary extraction instead of being silently discarded.
+    words=re.findall(r'[а-я]+',tail)
+    stems=('колбас','варен','маринов','моринов','огур','сыр','майонез','кетчуп','томат','соус','тест','начинк','состав')
+    if re.search(r'\d',tail) or any(w not in ('и','с','из','в','на') and not w.startswith(stems) for w in words):return None
+    grams=number(match[1].replace(',','.'))
+    if not 0<grams<=2000:return None
+    item=dict(name='Пицца домашняя (средняя справочная оценка)',grams=float(grams),
+              basis='ready',estimated=True,source_detail='Средний справочный аналог; рецепт и выход не измерены')
+    for key,value in zip(('kcal','protein','fat','carbs'),(275,12,11,32)):
+        item[key]=float(number(value)*grams/100)
+    return dict(action='record',reply='Пицца рассчитана приблизительно по среднему аналогу.',day=day,meal='OTHER',items=[item])
+
+
 def egg_counts(text):
     words={'одно':1,'один':1,'два':2,'две':2,'три':3,'четыре':4,'пять':5,'шесть':6}
     for word,count in words.items():

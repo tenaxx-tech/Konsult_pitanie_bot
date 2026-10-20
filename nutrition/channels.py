@@ -212,6 +212,13 @@ def answer(text, remote_factory=None, database=None,
                 db.execute('DELETE FROM intake_questions WHERE account=?',(owner_key,))
                 return 'Уточнение отменено. Новых продуктов не записывал.'
         if question and not command.startswith('/'):
+            from .intake_checks import known_pizza_event
+            if known_pizza_event(text,current_day) is not None:
+                with sqlite3.connect(database) as db:db.execute('DELETE FROM intake_questions WHERE account=?',(owner_key,))
+                _clear_pending(database,owner_key)
+                pending=None
+                question=None
+        if question and not command.startswith('/'):
             if pending and not _affirmative(text):
                 _clear_pending(database,owner_key)
                 pending=None
