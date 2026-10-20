@@ -129,11 +129,15 @@ def _intake_reply(result, items, status):
     total={k:sum((Decimal(str(x[k])) for x in items),Decimal(0)) for k in ('kcal','protein','fat','carbs')}
     estimate=' (оценка)' if any(x.get('estimated') is not False for x in items) else ''
     action='Записал в дневник' if status=='CONFIRMED' else 'Добавил в план'
-    fields=result['state']['fields'] if result.get('state') else {}
-    version=fields.get('Version',0)
-    return (f'{action}: {names}{estimate}. Итого: {total["kcal"]:.1f} ккал · '
+    reply = (f'{action}: {names}{estimate}.\nИтого: {total["kcal"]:.1f} ккал · '
             f'Б {total["protein"]:.1f} · Ж {total["fat"]:.1f} · У {total["carbs"]:.1f} г. '
-            f'{result.get("storage_notice", "Проверено чтением Airtable")}, версия {version}.')
+            'Дальше можешь прислать ещё продукты или попросить подобрать следующий приём пищи.')
+    notice=result.get('storage_notice','')
+    if notice=='Сохранено локально; синхронизация с Google проверяется отдельно':
+        reply+='\nСохранено локально.'
+    elif notice:
+        reply+='\nСтатус сохранения: '+notice
+    return reply
 
 
 def _estimate_reply(items):
