@@ -203,11 +203,18 @@ def answer(text, remote_factory=None, database=None,
     if owner_key:
         with sqlite3.connect(database) as db:
             db.execute('CREATE TABLE IF NOT EXISTS intake_questions(account TEXT PRIMARY KEY,text TEXT NOT NULL,event TEXT NOT NULL)')
+            if re.search(r'не\s+уч[её]л\w*\s+пиц',text.casefold()):
+                db.execute('DELETE FROM pending_meals WHERE owner_key=?',(owner_key,))
+                db.execute('INSERT OR REPLACE INTO intake_questions VALUES(?,?,?)',(owner_key,'Пицца. Пользователь просит уточнить учёт порции.',event_id))
+                return 'Давай уточним пиццу. Напиши вес порции и начинку; калорийность оценю сам. Если уже съела — так и напиши, чтобы отличить её от плана.'
             question=db.execute('SELECT text FROM intake_questions WHERE account=?',(owner_key,)).fetchone()
             if question and (_negative(text) or command=='/forget'):
                 db.execute('DELETE FROM intake_questions WHERE account=?',(owner_key,))
                 return 'Уточнение отменено. Новых продуктов не записывал.'
         if question and not command.startswith('/'):
+            if pending and not _affirmative(text):
+                _clear_pending(database,owner_key)
+                pending=None
             text=question[0]+'\nУточнение пользователя: '+text
             resume_intake=True
     cached_input=_event_data(database,event_id,'intake_input')
@@ -217,6 +224,7 @@ def answer(text, remote_factory=None, database=None,
     if pending and _affirmative(text):
         result=_record_items(remote_factory(),pending['day'],pending['meal'],pending['items'],pending['event_id'],'CONFIRMED')
         _clear_pending(database,owner_key)
+        with sqlite3.connect(database) as db:db.execute('DELETE FROM intake_questions WHERE account=?',(owner_key,))
         return _intake_reply(result,pending['items'],'CONFIRMED')
     if pending and _negative(text):
         _clear_pending(database,owner_key)
@@ -314,7 +322,7 @@ def answer(text, remote_factory=None, database=None,
                 if owner_key:
                     with sqlite3.connect(database) as db:db.execute('INSERT OR REPLACE INTO intake_questions VALUES(?,?,?)',(owner_key,text[:12000],event_id))
                 return question
-            if owner_key:
+            if owner_key and (is_explicit and data['action']=='record' or data['action']=='plan'):
                 with sqlite3.connect(database) as db:db.execute('DELETE FROM intake_questions WHERE account=?',(owner_key,))
             if attachment_ids and not is_explicit:
                 if not owner_key:
@@ -330,6 +338,7 @@ def answer(text, remote_factory=None, database=None,
                     _set_pending(database,owner_key,day,data['meal'],data['items'],event_id)
                 return _intake_reply(result,data['items'],'PLANNED')+'\nЧтобы отметить план как съеденный, ответьте «Съел».'
             if data['action']=='proposal' and owner_key:
+                with sqlite3.connect(database) as db:db.execute('INSERT OR REPLACE INTO intake_questions VALUES(?,?,?)',(owner_key,text[:12000],event_id))
                 _set_pending(database,owner_key,day,data['meal'],data['items'],event_id)
                 return _estimate_reply(data['items']) + '\nОтветьте «Съел» для записи или «Отмена», если не нужно вносить.'
         return chat(text, remote_factory().read(current_day), database)

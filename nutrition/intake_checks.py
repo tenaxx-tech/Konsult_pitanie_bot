@@ -19,7 +19,11 @@ def references(items, text):
     for item in items:
         name=item['name'].casefold()
         per100=None;url=None;canonical=None
-        if name.strip()=='банан':
+        if re.search(r'пицц?|пицу',name) and re.search(r'пицц?|пицу',lower):
+            per100=(275,12,11,32);url=None;canonical='Пицца (средняя справочная оценка)'
+            match=re.search(r'(?:вес\s*)?(\d+(?:[.,]\d+)?)\s*(?:грамм(?:а|ов)?|гр\.?|г)\b',lower)
+            if match and len(items)==1:item['grams']=match[1].replace(',','.')
+        elif name.strip()=='банан':
             per100=(89,1.09,.33,22.84);url='https://foods.fatsecret.com/calories-nutrition/usda/bananas';canonical='Банан, мякоть'
         elif re.search(r'яйц|яич',name) and re.search(r'(вар[её]н|отварн)',name):
             count=egg_counts(lower)
@@ -35,7 +39,7 @@ def references(items, text):
         if per100:
             grams=number(item['grams'])
             for k,v in zip(('kcal','protein','fat','carbs'),per100):item[k]=float(number(v)*grams/100)
-            item.update(name=canonical,source_detail='Справочная оценка, не этикетка пользователя: '+url,estimated=True)
+            item.update(name=canonical,source_detail='Справочная оценка, не этикетка пользователя'+(': '+url if url else '; средний аналог, начинка и тесто влияют на результат'),estimated=True)
     return items
 
 
