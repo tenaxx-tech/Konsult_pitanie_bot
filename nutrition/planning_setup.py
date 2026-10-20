@@ -52,14 +52,11 @@ def handle(accounts, account, text, day, remote_factory, attachment_ids=None):
     if inventory:
         pantry=text.strip()
         if attachment_ids:
-            from .gigachat_chat import extract_intake
-            result=extract_intake('Это имеющиеся продукты для будущего меню, не съеденная еда. Перечисли только видимые продукты. '+text,
-                                  day,{},attachment_ids)
-            names=[str(item.get('name') or item.get('product') or '') for item in result.get('items',[])]
-            names=[x for x in names if x]
-            if not names:
-                return 'Не удалось уверенно распознать продукты. Пришлите более чёткое фото или перечислите их текстом. В дневник ничего не записано.'
-            pantry+='\nПо фото (проверьте названия): '+', '.join(names)
+            from .gigachat_chat import describe_products
+            description=describe_products(attachment_ids,text)
+            if not description:
+                return 'Фото загрузилось, но продукты не удалось уверенно распознать. Пришлите более чёткое фото или перечислите их текстом. В дневник ничего не записано.'
+            pantry+='\nПо фото (проверьте названия): '+description
         profile['pantry']=pantry[:4000]
         profile['pantry_day']=day
         accounts.save(account,profile,user['stage'])

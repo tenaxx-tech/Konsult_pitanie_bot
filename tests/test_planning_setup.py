@@ -30,7 +30,7 @@ class PlanningSetupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             users=Accounts(d+'/db');u=users.start('telegram:2');p=u['profile'];p['planning_setup']=True
             users.save('telegram:2',p,'ready');remote=Mock()
-            with patch('nutrition.gigachat_chat.extract_intake',return_value={'action':'record','items':[{'name':'Яйца'}]}):
+            with patch('nutrition.gigachat_chat.describe_products',return_value='Яйца'):
                 reply=handle(users,'telegram:2','Для плана','2026-10-20',lambda:remote,['photo'])
             self.assertIn('Яйца',reply);remote.assert_not_called()
             self.assertIn('Яйца',users.get('telegram:2')['profile']['pantry'])
